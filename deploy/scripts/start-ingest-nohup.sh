@@ -40,6 +40,7 @@ fi
 
 # The worker imports secrets from ragctl.env itself. nohup keeps it alive after
 # SSH disconnect; all worker output is structured counts-only JSON in LOGFILE.
+printf '%s\n' '{"event":"nohup_launch"}' >> "$LOGFILE"
 nohup "$APP/deploy/scripts/_ingest-worker.sh" "$ARCHIVE" >>"$LOGFILE" 2>&1 </dev/null &
 pid=$!
 printf '%s\n' "$pid" > "$PIDFILE"
