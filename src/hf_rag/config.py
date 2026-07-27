@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
 
 @dataclass(frozen=True)
@@ -46,12 +48,23 @@ class Config:
     log_full_text: bool = False
     checkpoint: Path = Path("/home/obj/srv/hf-rag/state/ingest.sqlite3")
     rules: tuple[DatasetRule, ...] = field(default_factory=lambda: (DatasetRule(),))
+    credential_values: Mapping[str, str] | None = field(default=None, repr=False, compare=False)
 
     def api_key(self) -> str | None:
-        return os.environ.get(self.api_key_env)
+        return self._credential_value(self.api_key_env, "gb10_api_key")
 
     def qdrant_api_key(self) -> str | None:
-        return os.environ.get(self.qdrant_api_key_env)
+        return self._credential_value(self.qdrant_api_key_env, "qdrant_api_key")
+
+    def _credential_value(self, env_name: str, credential_name: str) -> str | None:
+        # Presence, rather than truthiness, makes an explicitly empty variable
+        # a deliberate override instead of silently falling back to a file key.
+        if env_name in os.environ:
+            return os.environ[env_name]
+        credentials = self.credential_values
+        if credentials is None:
+            credentials = load_credentials(discover_credentials_path())
+        return credentials.get(credential_name)
 
     def rule_for(self, dataset_path: str) -> DatasetRule:
         from fnmatch import fnmatch
@@ -91,11 +104,65 @@ def discover_config_path() -> Path | None:
     return None
 
 
+def discover_credentials_path(config_path: Path | None = None) -> Path | None:
+    """Resolve a credentials file without reading or printing its contents.
+
+    Order:
+    1. RAGCTL_CREDENTIALS env
+    2. $XDG_CONFIG_HOME/hf-rag/credentials.toml
+    3. ~/.config/hf-rag/credentials.toml
+    4. credentials.toml beside the resolved ragctl.toml
+    5. /opt/data/.config/hf-rag/credentials.toml  (hermes/raven volume)
+    6. /home/obj/srv/hf-rag/etc/credentials.toml  (host deploy)
+    """
+    candidates: list[Path] = []
+    if credentials_env := os.environ.get("RAGCTL_CREDENTIALS"):
+        candidates.append(Path(credentials_env))
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        candidates.append(Path(xdg) / "hf-rag" / "credentials.toml")
+    home = Path.home()
+    candidates.append(home / ".config" / "hf-rag" / "credentials.toml")
+    if config_path is None:
+        config_path = discover_config_path()
+    if config_path is not None:
+        candidates.append(config_path.parent / "credentials.toml")
+    candidates.append(Path("/opt/data/.config/hf-rag/credentials.toml"))
+    candidates.append(Path("/home/obj/srv/hf-rag/etc/credentials.toml"))
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path
+        except OSError:
+            continue
+    return None
+
+
+def load_credentials(path: Path | None) -> Mapping[str, str]:
+    """Load supported [keys] values without rendering them anywhere."""
+    if path is None:
+        return MappingProxyType({})
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    keys = raw.get("keys", {})
+    if not isinstance(keys, dict):
+        raise ValueError("credentials.toml [keys] must be a table")
+    credentials: dict[str, str] = {}
+    for key_name in ("qdrant_api_key", "gb10_api_key"):
+        value = keys.get(key_name)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"credentials.toml [keys].{key_name} must be a string")
+        credentials[key_name] = value
+    return MappingProxyType(credentials)
+
+
 def load_config(path: Path | None) -> Config:
     if path is None:
         path = discover_config_path()
+    credential_values = load_credentials(discover_credentials_path(path))
     if path is None:
-        return Config()
+        return Config(credential_values=credential_values)
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
     rag = raw.get("rag", {})
     ingest = raw.get("ingest", {})
@@ -133,5 +200,7 @@ def load_config(path: Path | None) -> Config:
         max_qdrant_rss_mib=int(ingest.get("max_qdrant_rss_mib", Config.max_qdrant_rss_mib)),
         disk_free_mib=int(ingest.get("disk_free_mib", Config.disk_free_mib)),
         log_full_text=log_full_text,
-        checkpoint=Path(ingest.get("checkpoint", str(Config.checkpoint))), rules=rules,
+        checkpoint=Path(ingest.get("checkpoint", str(Config.checkpoint))),
+        rules=rules,
+        credential_values=credential_values,
     )

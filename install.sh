@@ -239,7 +239,7 @@ main() {
   # Hermes/raven boxes often keep tools under /opt/data while HOME=/root.
   if [ -d /opt/data ]; then
     log "  export PATH=\"/opt/data/.local/bin:/opt/data/.local/share/mise/shims:\$PATH\""
-    log "  [ -f /opt/data/.config/hf-rag/path.sh ] && . /opt/data/.config/hf-rag/path.sh"
+    log "  # credentials are discovered from /opt/data/.config/hf-rag/credentials.toml after host setup"
   fi
   log "  export PATH=\"$HOME/.local/bin:$MISE_DATA_DIR/shims:\$PATH\""
   log "  eval \"\$($MISE_BIN activate bash)\"   # optional"

@@ -2,33 +2,94 @@
 # Configure a Hermes/raven container client to reach host Qdrant over docker network.
 # Run on the host (obj@mp). Never prints API keys or corpus text.
 set -eu
+set +x
+
 CONTAINER="${1:-hermes-ai-safety-hermes-1}"
-NET="${HF_RAG_HERMES_NETWORK:-hermes-ai-safety_private}"
 HOST_ETC="${HOST_ETC:-/home/obj/srv/hf-rag/etc}"
 QDRANT_ALIAS="${QDRANT_ALIAS:-deploy-qdrant-1}"
 
-[ -f "$HOST_ETC/ragctl.env" ] || { printf '%s\n' "missing $HOST_ETC/ragctl.env" >&2; exit 1; }
-[ -f "$HOST_ETC/ragctl.toml" ] || { printf '%s\n' "missing $HOST_ETC/ragctl.toml" >&2; exit 1; }
+[ -f "$HOST_ETC/ragctl.toml" ] || {
+  printf '%s\n' "missing $HOST_ETC/ragctl.toml" >&2
+  exit 1
+}
 
-# Ensure Qdrant is on the hermes network
+# Prefer the separate host credentials TOML. The legacy env file remains a
+# migration input for existing host installs, but is never copied into Hermes.
+if [ -n "${RAGCTL_CREDENTIALS:-}" ]; then
+  CREDENTIALS_FORMAT=toml
+  CREDENTIALS_SOURCE=$RAGCTL_CREDENTIALS
+  [ -f "$CREDENTIALS_SOURCE" ] || {
+    printf '%s\n' 'RAGCTL_CREDENTIALS does not name a file' >&2
+    exit 1
+  }
+elif [ -f "$HOST_ETC/credentials.toml" ]; then
+  CREDENTIALS_FORMAT=toml
+  CREDENTIALS_SOURCE=$HOST_ETC/credentials.toml
+elif [ -f "$HOST_ETC/ragctl.env" ]; then
+  CREDENTIALS_FORMAT=env
+  CREDENTIALS_SOURCE=$HOST_ETC/ragctl.env
+else
+  printf '%s\n' "missing $HOST_ETC/credentials.toml and $HOST_ETC/ragctl.env" >&2
+  exit 1
+fi
+
+# The runtime identity must own its 0600 credentials file.
+docker exec "$CONTAINER" id hermes >/dev/null 2>&1 || {
+  printf '%s\n' "missing hermes user in $CONTAINER" >&2
+  exit 1
+}
+
+# Convert host credentials to a temporary TOML stream without putting keys in
+# command arguments or output. The file is removed on every exit path.
+umask 077
+CONTAINER_CREDENTIALS=$(mktemp "$HOST_ETC/.container-credentials.XXXXXX")
+cleanup() {
+  rm -f "$CONTAINER_CREDENTIALS"
+}
+trap cleanup 0 HUP INT TERM
+chmod 600 "$CONTAINER_CREDENTIALS"
+python3 - "$CREDENTIALS_FORMAT" "$CREDENTIALS_SOURCE" > "$CONTAINER_CREDENTIALS" <<'PY'
+import json
+import sys
+import tomllib
+from pathlib import Path
+
+credential_format, source_name = sys.argv[1:3]
+source = Path(source_name)
+if credential_format == "toml":
+    raw = tomllib.loads(source.read_text(encoding="utf-8"))
+    keys = raw.get("keys", {})
+    if not isinstance(keys, dict):
+        raise SystemExit("host credentials [keys] must be a table")
+    qdrant_key = keys.get("qdrant_api_key")
+    gb10_key = keys.get("gb10_api_key")
+else:
+    legacy: dict[str, str] = {}
+    for line in source.read_text(encoding="utf-8").splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name in {"QDRANT_API_KEY", "GB10_API_KEY"}:
+            legacy[name] = value
+    qdrant_key = legacy.get("QDRANT_API_KEY")
+    gb10_key = legacy.get("GB10_API_KEY")
+
+if not isinstance(qdrant_key, str) or not qdrant_key:
+    raise SystemExit("host credentials are missing qdrant_api_key")
+if gb10_key is not None and not isinstance(gb10_key, str):
+    raise SystemExit("host credentials gb10_api_key must be a string")
+
+print("[keys]")
+print(f"qdrant_api_key = {json.dumps(qdrant_key)}")
+if gb10_key:
+    print(f"gb10_api_key = {json.dumps(gb10_key)}")
+PY
+
+# Ensure Qdrant is on the Hermes network only after all local prerequisites pass.
 APP_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 sh "$APP_ROOT/deploy/scripts/wire-hermes-network.sh" >/dev/null
 
-# Resolve Qdrant IP/alias on that network for a health check only
-QIP="$(docker inspect "$QDRANT_ALIAS" --format '{{range $k,$v := .NetworkSettings.Networks}}{{if eq $k "'"$NET"'"}}{{$v.IPAddress}}{{end}}{{end}}' 2>/dev/null || true)"
-[ -n "$QIP" ] || QIP="$QDRANT_ALIAS"
-
-# Read keys without printing them
-set -a
-# shellcheck disable=SC1090
-. "$HOST_ETC/ragctl.env"
-set +a
-: "${QDRANT_API_KEY:?QDRANT_API_KEY missing in ragctl.env}"
-
-# Write container-side config under /opt/data (persistent volume for hermes boxes)
+# Write non-secret config and a separate 0600 credentials.toml under the
+# persistent /opt/data volume. Neither file is ever rendered by this script.
 docker exec "$CONTAINER" sh -lc 'mkdir -p /opt/data/.config/hf-rag /opt/data/.local/bin'
-
-# ragctl.toml for container: point at docker-network alias, keep GB10 URLs
 docker exec -i "$CONTAINER" sh -lc 'cat > /opt/data/.config/hf-rag/ragctl.toml' <<EOF
 [rag]
 qdrant_url = "http://${QDRANT_ALIAS}:6333"
@@ -56,19 +117,18 @@ disk_free_mib = 1024
 checkpoint = "/opt/data/.local/share/hf-rag/ingest.sqlite3"
 log_full_text = false
 EOF
-
-# env file inside container. Interactive hermes-shell runs as user `hermes`
-# (uid 10000), not root — so root-only 0600 causes: Permission denied.
-docker exec -i -e QK="$QDRANT_API_KEY" -e GK="${GB10_API_KEY:-}" "$CONTAINER" sh -lc '
+docker exec -i "$CONTAINER" sh -lc '
   umask 077
-  printf "QDRANT_API_KEY=%s\nGB10_API_KEY=%s\nRAGCTL_CONFIG=/opt/data/.config/hf-rag/ragctl.toml\n" "$QK" "$GK" > /opt/data/.config/hf-rag/ragctl.env
-'
+  cat > /opt/data/.config/hf-rag/credentials.toml
+' < "$CONTAINER_CREDENTIALS"
+rm -f "$CONTAINER_CREDENTIALS"
 
-# PATH helper for interactive shells (HOME may be /root while tools live under /opt/data)
+# PATH-only helper for interactive shells. Auth and config discovery live in
+# ragctl itself so non-interactive Hermes tool shells need not source anything.
 docker exec "$CONTAINER" sh -lc '
   mkdir -p /opt/data/.local/bin /opt/data/.local/share/uv/tools/hf-rag/bin
-  # ALWAYS restore the real Python console script under uv tools bin.
-  # Never install the env wrapper there (recursive wrapper caused hangs).
+  # Always restore the real Python console script under uv tools bin.
+  # Never install a wrapper there (a recursive wrapper caused hangs).
   PY=/opt/data/.local/share/uv/tools/hf-rag/bin/python
   REAL=/opt/data/.local/share/uv/tools/hf-rag/bin/ragctl
   if [ -x "$PY" ]; then
@@ -84,111 +144,76 @@ PYBIN
     chmod 755 "$REAL"
   fi
 
-  # Wrapper ONLY at ~/.local/bin: Hermes tool shells skip .bashrc → no QDRANT_API_KEY → 401.
   if [ -x "$REAL" ]; then
     cat > /opt/data/.local/bin/ragctl <<'"'"'WRAP'"'"'
 #!/bin/sh
-# hf-rag env bootstrap for non-interactive Hermes terminals
-CFG="${RAGCTL_CONFIG:-/opt/data/.config/hf-rag/ragctl.toml}"
-ENVF="/opt/data/.config/hf-rag/ragctl.env"
+# PATH-only hf-rag launcher. ragctl resolves config and credentials itself.
 REAL="/opt/data/.local/share/uv/tools/hf-rag/bin/ragctl"
-if [ -r "$ENVF" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENVF"
-  set +a
-fi
-export RAGCTL_CONFIG="${RAGCTL_CONFIG:-$CFG}"
 if [ ! -x "$REAL" ]; then
-  echo "ragctl: real binary missing at $REAL" >&2
+  printf "%s\\n" "ragctl: real binary missing at $REAL" >&2
   exit 127
 fi
-if [ -f "${RAGCTL_CONFIG}" ]; then
-  case " $* " in
-    *" --config "*) exec "$REAL" "$@" ;;
-    *)
-      if [ "$#" -ge 1 ]; then
-        cmd="$1"; shift
-        exec "$REAL" "$cmd" --config "$RAGCTL_CONFIG" "$@"
-      else
-        exec "$REAL" --help
-      fi
-      ;;
-  esac
-else
-  exec "$REAL" "$@"
-fi
+exec "$REAL" "$@"
 WRAP
     chmod 755 /opt/data/.local/bin/ragctl
   fi
   ln -sfn /opt/data/.local/bin/ragctl /usr/local/bin/ragctl 2>/dev/null || true
-  # profile snippet — never hard-fail if env is unreadable
+
   snip=/opt/data/.config/hf-rag/path.sh
-  cat > "$snip" <<'\''EOS'\''
-# hf-rag client path + env (sourced by hermes shells)
+  cat > "$snip" <<'"'"'EOS'"'"'
+# hf-rag PATH helper only. ragctl reads credentials.toml directly.
 export PATH="/opt/data/.local/bin:/opt/data/.local/share/mise/shims:${PATH:-}"
-if [ -r /opt/data/.config/hf-rag/ragctl.env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . /opt/data/.config/hf-rag/ragctl.env
-  set +a
-elif [ -f /opt/data/.config/hf-rag/ragctl.env ]; then
-  printf "%s\n" "hf-rag: cannot read /opt/data/.config/hf-rag/ragctl.env (permission denied). Run on host: sh /home/obj/srv/hf-rag/app/deploy/scripts/setup-container-client.sh" >&2
-fi
-export RAGCTL_CONFIG="${RAGCTL_CONFIG:-/opt/data/.config/hf-rag/ragctl.toml}"
 EOS
-  # Ownership: hermes-shell sessions are often user hermes on /opt/data volume.
-  if id hermes >/dev/null 2>&1; then
-    chown -R hermes:hermes /opt/data/.config/hf-rag /opt/data/.local/bin/ragctl \
-      /opt/data/.local/share/uv/tools/hf-rag/bin/ragctl 2>/dev/null || true
-    chmod 750 /opt/data/.config/hf-rag
-    chmod 640 /opt/data/.config/hf-rag/ragctl.env
-    chmod 644 /opt/data/.config/hf-rag/ragctl.toml /opt/data/.config/hf-rag/path.sh
-    chmod 755 /opt/data/.local/bin/ragctl /opt/data/.local/share/uv/tools/hf-rag/bin/ragctl 2>/dev/null || true
-  else
-    chmod 755 /opt/data/.config/hf-rag
-    chmod 644 /opt/data/.config/hf-rag/ragctl.env /opt/data/.config/hf-rag/ragctl.toml /opt/data/.config/hf-rag/path.sh
-  fi
+
+  # Remove the old container-only secret copy after the 0600 TOML is in place.
+  rm -f /opt/data/.config/hf-rag/ragctl.env
+  chown -R hermes:hermes /opt/data/.config/hf-rag /opt/data/.local/bin/ragctl \
+    /opt/data/.local/share/uv/tools/hf-rag/bin/ragctl 2>/dev/null || true
+  chmod 750 /opt/data/.config/hf-rag
+  chmod 600 /opt/data/.config/hf-rag/credentials.toml
+  chmod 644 /opt/data/.config/hf-rag/ragctl.toml /opt/data/.config/hf-rag/path.sh
+  chmod 755 /opt/data/.local/bin/ragctl /opt/data/.local/share/uv/tools/hf-rag/bin/ragctl 2>/dev/null || true
+
+  # Keep interactive PATH setup convenient, but never source secrets from it.
   for rc in /opt/data/.bashrc /root/.bashrc; do
     if [ -f "$rc" ] || mkdir -p "$(dirname "$rc")" 2>/dev/null; then
       touch "$rc"
       if ! grep -q "hf-rag/path.sh" "$rc" 2>/dev/null; then
-        printf "\n# hf-rag\n[ -f %s ] && . %s\n" "$snip" "$snip" >> "$rc"
+        printf "\\n# hf-rag\\n[ -f %s ] && . %s\\n" "$snip" "$snip" >> "$rc"
       fi
-      if id hermes >/dev/null 2>&1 && [ -f /opt/data/.bashrc ]; then
+      if [ -f /opt/data/.bashrc ]; then
         chown hermes:hermes /opt/data/.bashrc 2>/dev/null || true
       fi
     fi
   done
 '
 
-# Smoke: interactive path + agent-like clean env (no bashrc) must not 401
+# Smoke the actual execution path. The final call deliberately has no inherited
+# key variables, no RAGCTL_CONFIG, and no sourced shell profile.
 docker exec "$CONTAINER" sh -lc '
-  . /opt/data/.config/hf-rag/path.sh
+  PATH=/opt/data/.local/bin:/opt/data/.local/share/mise/shims:$PATH
+  export PATH
   command -v ragctl
   ragctl --help >/dev/null
-  ragctl doctor --config /opt/data/.config/hf-rag/ragctl.toml
-  ragctl stats --config /opt/data/.config/hf-rag/ragctl.toml
+  ragctl doctor
+  ragctl stats
 '
-if docker exec "$CONTAINER" id hermes >/dev/null 2>&1; then
-  docker exec -u hermes "$CONTAINER" sh -lc '
-    . /opt/data/.config/hf-rag/path.sh
-    command -v ragctl
-    ragctl stats --config /opt/data/.config/hf-rag/ragctl.toml
-  '
-  # Critical: no env inheritance (Hermes tool shells)
-  docker exec -u hermes "$CONTAINER" sh -lc '
-    env -i HOME=/opt/data PATH=/opt/data/.local/bin:/usr/bin:/bin \
-      /opt/data/.local/bin/ragctl stats
-  '
-fi
+docker exec -u hermes "$CONTAINER" sh -lc '
+  PATH=/opt/data/.local/bin:/opt/data/.local/share/mise/shims:$PATH
+  export PATH
+  command -v ragctl
+  ragctl stats
+'
+docker exec -u hermes "$CONTAINER" sh -lc '
+  env -i HOME=/opt/data PATH=/opt/data/.local/bin:/usr/bin:/bin \
+    /opt/data/.local/bin/ragctl stats
+'
 
-# Install query-only Hermes skill into box skill roots (hermes user)
+# Install query-only Hermes skill into box skill roots (hermes user).
 APP_SKILL_SRC="$APP_ROOT/hermes-skills/private-hf-corpus-search"
 if [ -d "$APP_SKILL_SRC" ]; then
   for dest in /opt/data/skills/private-hf-corpus-search /opt/data/.agents/skills/private-hf-corpus-search; do
     docker exec "$CONTAINER" sh -lc "mkdir -p $(dirname $dest)"
-    # copy via tar to preserve perms as hermes
     tar -C "$APP_SKILL_SRC" -cf - . | docker exec -i -u hermes "$CONTAINER" sh -lc "mkdir -p $dest && tar -C $dest -xf - && chmod -R u+rwX,go+rX $dest"
   done
   printf '%s\n' "skill_installed private-hf-corpus-search"

@@ -44,6 +44,29 @@ If GB10 uses a bearer key, supply it only as an environment variable to the inst
 GB10_API_KEY='…' ssh -o BatchMode=yes obj@mp /home/obj/srv/hf-rag/app/deploy/scripts/install-on-mp.sh
 ```
 
+## Credentials (XDG)
+
+`ragctl.toml` is non-secret configuration. Keep API keys in a separate mode-`0600`
+`credentials.toml`, using `deploy/credentials.toml.example` as the committed
+placeholder-only shape:
+
+```toml
+[keys]
+qdrant_api_key = "replace-with-qdrant-api-key"
+gb10_api_key = "replace-with-gb10-api-key"
+```
+
+For each key, `ragctl` first honors its configured environment variable
+(`QDRANT_API_KEY` or `GB10_API_KEY`) when it is set, then loads the first
+available credentials file in this order: `RAGCTL_CREDENTIALS`,
+`$XDG_CONFIG_HOME/hf-rag/credentials.toml`,
+`~/.config/hf-rag/credentials.toml`, beside the resolved `ragctl.toml`,
+`/opt/data/.config/hf-rag/credentials.toml`, then
+`/home/obj/srv/hf-rag/etc/credentials.toml`. If neither source provides a key,
+requests retain the existing authentication failure behavior. Do not source a
+credentials file into a shell: `ragctl` reads it directly and never renders its
+contents.
+
 ## Install inside a container / `raven-box hermes-shell ai-safety`
 
 Preferred one-liner (pulls **GitHub `main`**, no sudo, no corpus access):
@@ -53,7 +76,6 @@ raven-box hermes-shell ai-safety
 curl -fsSL https://raw.githubusercontent.com/RyderFreeman4Logos/hf-rag/main/install.sh | bash
 # Hermes boxes often use HOME=/root while tools land under /opt/data:
 export PATH="/opt/data/.local/bin:/opt/data/.local/share/mise/shims:$HOME/.local/bin:$PATH"
-[ -f /opt/data/.config/hf-rag/path.sh ] && . /opt/data/.config/hf-rag/path.sh
 ragctl --help
 ```
 
@@ -71,12 +93,15 @@ Fix on the **host** (once per box):
 sh /home/obj/srv/hf-rag/app/deploy/scripts/setup-container-client.sh hermes-ai-safety-hermes-1
 ```
 
-This attaches Qdrant to `hermes-ai-safety_private`, writes `/opt/data/.config/hf-rag/ragctl.toml` pointing at `http://deploy-qdrant-1:6333`, injects API keys into env (not argv), and links `ragctl` onto PATH.
+This attaches Qdrant to `hermes-ai-safety_private`, writes non-secret
+`/opt/data/.config/hf-rag/ragctl.toml` plus hermes-owned mode-`0600`
+`credentials.toml`, and links `ragctl` onto PATH. `ragctl` discovers those
+files directly; `path.sh` is optional and only adds PATH for interactive shells.
 
 Then inside the shell:
 
 ```sh
-. /opt/data/.config/hf-rag/path.sh
+export PATH="/opt/data/.local/bin:/opt/data/.local/share/mise/shims:$PATH"
 ragctl doctor
 ragctl stats
 ragctl search --query 'capacity planning documentation'
@@ -148,9 +173,10 @@ ssh -o BatchMode=yes obj@mp /home/obj/srv/hf-rag/app/deploy/scripts/ingest-datas
 ssh -o BatchMode=yes obj@mp /home/obj/srv/hf-rag/app/deploy/scripts/start-ingest-nohup.sh
 # /home/obj/srv/hf-rag/logs/ingest.nohup.log
 
-ssh -o BatchMode=yes obj@mp 'set -a; . /home/obj/srv/hf-rag/etc/ragctl.env; set +a; \
- /home/obj/srv/hf-rag/app/.venv/bin/ragctl doctor --config /home/obj/srv/hf-rag/etc/ragctl.toml; \
- /home/obj/srv/hf-rag/app/.venv/bin/ragctl verify --config /home/obj/srv/hf-rag/etc/ragctl.toml; \
+ssh -o BatchMode=yes obj@mp 'env -i HOME=/home/obj PATH=/home/obj/srv/hf-rag/app/.venv/bin:/usr/bin:/bin \
+ ragctl doctor --config /home/obj/srv/hf-rag/etc/ragctl.toml; \
+ env -i HOME=/home/obj PATH=/home/obj/srv/hf-rag/app/.venv/bin:/usr/bin:/bin \
+ ragctl verify --config /home/obj/srv/hf-rag/etc/ragctl.toml; \
  docker stats --no-stream --format "{{.Name}} {{.MemUsage}}"'
 ```
 

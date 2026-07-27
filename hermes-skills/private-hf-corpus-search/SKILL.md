@@ -9,32 +9,38 @@ Use when you need **source records** from the private local hybrid RAG index (Qd
 
 This skill is **query-only**. Do not run ingest, delete, or admin commands.
 
-## Environment (must already work)
+## Environment
 
 Inside `raven-box hermes-shell ai-safety` (user `hermes`, `HOME=/opt/data`):
 
 ```bash
 export PATH="/opt/data/.local/bin:/opt/data/.local/share/mise/shims:${PATH:-}"
-# Optional if wrapper installed; still fine to source:
-[ -r /opt/data/.config/hf-rag/path.sh ] && . /opt/data/.config/hf-rag/path.sh
 command -v ragctl
 ragctl stats
 ragctl doctor
 ```
 
-**401 is almost never “key expired”.** Qdrant returns 401 when **no/wrong API key** is sent. Hermes tool shells often **do not load `.bashrc`**, so bare `ragctl` used to miss `QDRANT_API_KEY`. The `/opt/data/.local/bin/ragctl` **wrapper** loads `ragctl.env` itself — use that binary (on PATH as above).
+Host setup writes non-secret `ragctl.toml` and a separate hermes-owned,
+mode-`0600` `/opt/data/.config/hf-rag/credentials.toml`. `ragctl` discovers
+both directly from XDG/HOME, so **do not source** `path.sh` or an env file for
+authentication. `path.sh` is optional and only adds PATH for interactive shells.
 
-If still 401 after wrapper:
+For each key, a set environment variable is the explicit override; otherwise
+`ragctl` reads `[keys].qdrant_api_key` or `[keys].gb10_api_key` from the
+credentials file. Never print, copy, or source that file.
+
+If `stats` still returns 401, have the host operator refresh the container
+credentials:
 
 ```bash
 # operator on host
 sh /home/obj/srv/hf-rag/app/deploy/scripts/setup-container-client.sh hermes-ai-safety-hermes-1
 ```
 
-Then in the box:
+Then prove the real agent path without a shell profile, key environment, or
+wrapper-provided auth:
 
 ```bash
-# must succeed even with clean env (no bashrc)
 env -i HOME=/opt/data PATH=/opt/data/.local/bin:/usr/bin:/bin ragctl stats
 ```
 

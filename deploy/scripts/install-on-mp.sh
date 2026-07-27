@@ -31,7 +31,33 @@ if [ ! -f "$ETC/ragctl.env" ]; then
   printf 'QDRANT_API_KEY=%s\n' "$qdrant_key" > "$ETC/ragctl.env"
   printf 'GB10_API_KEY=%s\n' "${GB10_API_KEY:-}" >> "$ETC/ragctl.env"
 fi
+# Retained temporarily for the existing systemd ingest worker. Client commands
+# load the separate credentials.toml directly and do not need to source this.
 chmod 600 "$ETC/ragctl.env"
+if [ ! -f "$ETC/credentials.toml" ]; then
+  umask 077
+  python3 - "$ETC/ragctl.env" > "$ETC/credentials.toml" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+legacy: dict[str, str] = {}
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    name, separator, value = line.partition("=")
+    if separator and name in {"QDRANT_API_KEY", "GB10_API_KEY"}:
+        legacy[name] = value
+qdrant_key = legacy.get("QDRANT_API_KEY")
+gb10_key = legacy.get("GB10_API_KEY")
+if not qdrant_key:
+    raise SystemExit("ragctl.env is missing QDRANT_API_KEY")
+
+print("[keys]")
+print(f"qdrant_api_key = {json.dumps(qdrant_key)}")
+if gb10_key:
+    print(f"gb10_api_key = {json.dumps(gb10_key)}")
+PY
+fi
+chmod 600 "$ETC/credentials.toml"
 if [ ! -f "$ETC/ragctl.toml" ]; then
   cp "$APP/deploy/ragctl.toml.example" "$ETC/ragctl.toml"
   chmod 600 "$ETC/ragctl.toml"
@@ -60,8 +86,5 @@ install -m 644 "$APP/deploy/systemd/rag-ingest@.service" "$HOME/.config/systemd/
 systemctl --user daemon-reload
 systemctl --user enable --now qdrant.user.service
 systemctl --user enable --now qdrant-update.timer
-set -a
-. "$ETC/ragctl.env"
-set +a
 "$APP/.venv/bin/ragctl" create-collection --config "$ETC/ragctl.toml"
 printf '%s\n' 'install_complete'

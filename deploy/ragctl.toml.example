@@ -1,3 +1,5 @@
+# Non-secret client settings only. Put keys in a separate mode-0600
+# credentials.toml using deploy/credentials.toml.example as the shape.
 [rag]
 qdrant_url = "http://127.0.0.1:6333"
 collection = "hf_eval_hybrid"
