@@ -12,9 +12,9 @@ gb10_max_attempts = 100
 retry_max_sleep_seconds = 300
 
 [ingest]
-embed_batch_size = 4
+embed_batch_size = 32
 embed_concurrency = 8
-upsert_batch_size = 8
+upsert_batch_size = 32
 min_mem_available_mib = 768
 max_qdrant_rss_mib = 700
 disk_free_mib = 1024

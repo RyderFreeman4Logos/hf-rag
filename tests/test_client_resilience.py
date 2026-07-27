@@ -101,8 +101,8 @@ def test_default_gb10_retry_budget_is_extreme() -> None:
     assert config.timeout_seconds >= 540
     assert config.gb10_max_attempts >= 50
     assert config.retry_max_sleep_seconds >= 120
-    assert config.embed_batch_size >= 16
-    assert config.upsert_batch_size >= 16
+    assert config.embed_batch_size == 32
+    assert config.upsert_batch_size == 32
 
 
 def test_concurrent_embeds_use_distinct_thread_local_gb10_clients(monkeypatch: pytest.MonkeyPatch) -> None:

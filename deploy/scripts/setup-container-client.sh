@@ -48,8 +48,8 @@ bm25_prefetch = 240
 fused_limit = 120
 
 [ingest]
-embed_batch_size = 4
-upsert_batch_size = 8
+embed_batch_size = 32
+upsert_batch_size = 32
 min_mem_available_mib = 768
 max_qdrant_rss_mib = 700
 disk_free_mib = 1024
