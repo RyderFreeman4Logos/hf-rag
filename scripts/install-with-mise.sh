@@ -38,7 +38,7 @@ if command -v uv >/dev/null 2>&1; then
     tool_bin=${UV_TOOL_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}
     mkdir -p "$tool_bin"
     # Project name is hf-rag; [project.scripts] exposes ragctl.
-    UV_TOOL_BIN_DIR="$tool_bin" uv tool install --from "$repo_root" --force hf-rag
+    UV_TOOL_BIN_DIR="$tool_bin" uv tool install --from "$repo_root" --force 'hf-rag[parquet]'
     ragctl_bin="$tool_bin/ragctl"
 else
     data_home=${XDG_DATA_HOME:-$HOME/.local/share}

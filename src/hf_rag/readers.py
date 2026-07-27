@@ -10,12 +10,21 @@ from pathlib import Path
 from typing import Any, BinaryIO, Iterator
 
 import ijson
-import pyarrow.parquet as pq
 import zstandard as zstd
 
 SUPPORTED = frozenset({".csv", ".jsonl", ".json", ".parquet"})
 _SKIP_NAMES = frozenset({"readme.md", "readme", "dataset_info.json", "state.json"})
 _SKIP_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".lock"})
+
+
+def _require_pyarrow():
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:  # pragma: no cover - optional dep
+        raise RuntimeError(
+            "parquet support requires optional extra: uv tool install --from . 'hf-rag[parquet]'"
+        ) from exc
+    return pq
 
 
 @dataclass(frozen=True)
@@ -116,6 +125,7 @@ def _json_rows(file: BinaryIO) -> Iterator[dict[str, Any]]:
 
 def _parquet_rows(file: BinaryIO) -> Iterator[dict[str, Any]]:
     # Parquet footer access requires seeks; spool just this member, never the archive.
+    pq = _require_pyarrow()
     with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
         while chunk := file.read(1024 * 1024):
             tmp.write(chunk)
@@ -177,6 +187,7 @@ def safe_file_metadata(path: str, file: BinaryIO, byte_size: int) -> dict[str, A
     error: str | None = None
     try:
         if suffix == ".parquet":
+            pq = _require_pyarrow()
             with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
                 while chunk := file.read(1024 * 1024):
                     tmp.write(chunk)

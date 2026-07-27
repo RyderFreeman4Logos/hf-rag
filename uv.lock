@@ -136,10 +136,17 @@ dependencies = [
     { name = "httpx" },
     { name = "ijson" },
     { name = "platformdirs" },
-    { name = "pyarrow" },
     { name = "tomli-w" },
     { name = "typer" },
     { name = "zstandard" },
+]
+
+[package.optional-dependencies]
+host = [
+    { name = "pyarrow" },
+]
+parquet = [
+    { name = "pyarrow" },
 ]
 
 [package.dev-dependencies]
@@ -151,14 +158,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "hf-rag", extras = ["parquet"], marker = "extra == 'host'" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "ijson", specifier = "==3.4.0.post0" },
     { name = "platformdirs", specifier = "==4.3.8" },
-    { name = "pyarrow", specifier = "==20.0.0" },
+    { name = "pyarrow", marker = "extra == 'parquet'", specifier = "==20.0.0" },
     { name = "tomli-w", specifier = "==1.2.0" },
     { name = "typer", specifier = "==0.16.0" },
     { name = "zstandard", specifier = "==0.23.0" },
 ]
+provides-extras = ["parquet", "host"]
 
 [package.metadata.requires-dev]
 dev = [

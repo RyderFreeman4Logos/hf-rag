@@ -52,7 +52,7 @@ def test_mise_installer_uses_local_checkout_and_persists_a_shim(tmp_path: Path) 
     )
 
     assert result.returncode == 0, result.stderr
-    assert capture.read_text(encoding="utf-8").strip() == f"tool install --from {REPO} --force hf-rag"
+    assert capture.read_text(encoding="utf-8").strip() == f"tool install --from {REPO} --force hf-rag[parquet]"
     shim = data_home / "mise" / "shims" / "ragctl"
     assert shim.is_file()
     assert subprocess.run([str(shim)], text=True, capture_output=True, check=True).stdout == "ragctl-smoke\n"

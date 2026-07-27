@@ -59,10 +59,21 @@ ragctl --help
 
 What `install.sh` does:
 
-1. Bootstraps **mise** (if missing) and **uv** (if missing).
-2. Shallow-clones/updates `https://github.com/RyderFreeman4Logos/hf-rag` at ref **`main`** into `$XDG_DATA_HOME/hf-rag/src` (default `~/.local/share/hf-rag/src`).
-3. Runs `uv tool install --from <checkout> hf-rag` (console script: `ragctl`) into `~/.local/bin`.
-4. Writes a mise shim for `ragctl`.
+1. Bootstraps **mise** (if missing) and ensures **uv** + **Python 3.11** via `mise use -g`.
+2. **Primary:** `mise use -g -y 'pipx:git+https://github.com/RyderFreeman4Logos/hf-rag.git@main'`
+3. **Fallback:** shallow-clone + `uv tool install --from <checkout> hf-rag` (console script `ragctl`) + mise shim.
+4. Never requires `sudo`. Never reads corpus archives.
+
+Host ingest of `.parquet` needs the optional extra (binary wheels):
+
+```sh
+# after install, on the host that runs ingest:
+uv tool install --from "$HOME/.local/share/hf-rag/src" --force --reinstall-package hf-rag 'hf-rag[parquet]'
+# or from a checkout:
+uv tool install --from /home/obj/srv/hf-rag/app --force 'hf-rag[parquet]'
+```
+
+Container / Hermes shell usually only needs the base CLI (`search` / `doctor` against an already-running Qdrant).
 
 Optional environment overrides (all non-interactive — safe under `curl | bash`):
 
