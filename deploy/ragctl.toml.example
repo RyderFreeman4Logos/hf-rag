@@ -14,6 +14,7 @@ retry_max_sleep_seconds = 300
 [ingest]
 embed_batch_size = 32
 embed_concurrency = 8
+queue_depth = 8
 upsert_batch_size = 32
 min_mem_available_mib = 768
 max_qdrant_rss_mib = 700

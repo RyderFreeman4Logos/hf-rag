@@ -34,6 +34,7 @@ class Config:
     retry_max_sleep_seconds: float = 300.0
     embed_batch_size: int = 32
     embed_concurrency: int = 8
+    queue_depth: int = 8
     upsert_batch_size: int = 32
     # Retrieval quality knobs (slow is OK). Defaults favor recall + rerank depth.
     dense_prefetch: int = 240
@@ -123,6 +124,7 @@ def load_config(path: Path | None) -> Config:
         retry_max_sleep_seconds=float(rag.get("retry_max_sleep_seconds", Config.retry_max_sleep_seconds)),
         embed_batch_size=int(ingest.get("embed_batch_size", Config.embed_batch_size)),
         embed_concurrency=int(ingest.get("embed_concurrency", Config.embed_concurrency)),
+        queue_depth=int(ingest.get("queue_depth", Config.queue_depth)),
         upsert_batch_size=int(ingest.get("upsert_batch_size", Config.upsert_batch_size)),
         dense_prefetch=int(retrieval.get("dense_prefetch", Config.dense_prefetch)),
         bm25_prefetch=int(retrieval.get("bm25_prefetch", Config.bm25_prefetch)),

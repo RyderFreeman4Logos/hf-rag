@@ -102,6 +102,7 @@ def test_default_gb10_retry_budget_is_extreme() -> None:
     assert config.gb10_max_attempts >= 50
     assert config.retry_max_sleep_seconds >= 120
     assert config.embed_batch_size == 32
+    assert config.queue_depth == 8
     assert config.upsert_batch_size == 32
 
 

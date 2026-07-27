@@ -9,6 +9,8 @@ from collections import Counter, deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from queue import Full, Queue
+from threading import Event, Lock, Thread
 from typing import Any, Iterator
 
 from .checkpoint import Checkpoint
@@ -118,16 +120,21 @@ def _to_points(records: list[Record], vectors: list[list[float]]) -> list[dict[s
 
 
 def ingest(source: Path, config: Config, *, progress_every: int = 100) -> IngestStats:
-    """Bounded concurrent embedding with serial, checkpointed Qdrant upserts."""
+    """Bounded concurrent embedding with a serial, checkpointed writer."""
     if config.embed_batch_size < 1 or config.upsert_batch_size < 1:
         raise ValueError("embed_batch_size and upsert_batch_size must be positive")
     if config.embed_concurrency < 1:
         raise ValueError("embed_concurrency must be positive")
+    if config.queue_depth < 1:
+        raise ValueError("queue_depth must be positive")
     stats = IngestStats()
     checkpoint = Checkpoint(config.checkpoint)
     client = RAGClient(config)
     batch: list[Record] = []
-    pending: deque[tuple[list[Record], Future[list[list[float]]]]] = deque()
+    completed: Queue[tuple[list[Record], list[list[float]]] | None] = Queue(maxsize=config.queue_depth)
+    stop_writer = Event()
+    writer_errors: list[BaseException] = []
+    writer_error_lock = Lock()
 
     print(
         json.dumps(
@@ -135,6 +142,7 @@ def ingest(source: Path, config: Config, *, progress_every: int = 100) -> Ingest
                 "ingest_started",
                 embed_concurrency=config.embed_concurrency,
                 embed_batch_size=config.embed_batch_size,
+                queue_depth=config.queue_depth,
                 upsert_batch_size=config.upsert_batch_size,
                 timeout_seconds=config.timeout_seconds,
                 gb10_max_attempts=config.gb10_max_attempts,
@@ -144,22 +152,64 @@ def ingest(source: Path, config: Config, *, progress_every: int = 100) -> Ingest
         flush=True,
     )
 
-    def flush_one() -> None:
-        records, future = pending.popleft()
-        # A permanent error propagates and leaves these rows uncheckpointed for
-        # resume; transient errors are retried by RAGClient rather than skipped.
-        vectors = future.result()
-        wait_for_resources(config)
-        client.upsert(_to_points(records, vectors))
-        checkpoint.mark_many([(item.record_id, item.content_hash) for item in records])
-        stats.upserted += len(records)
-        stats.batches += 1
-        if stats.upserted % progress_every == 0:
-            print(json.dumps(safe_event("progress", **stats.as_dict()), sort_keys=True), flush=True)
+    def writer_failed() -> BaseException | None:
+        with writer_error_lock:
+            return writer_errors[0] if writer_errors else None
 
+    def writer() -> None:
+        writer_checkpoint: Checkpoint | None = None
+        try:
+            writer_checkpoint = Checkpoint(config.checkpoint)
+            while True:
+                item = completed.get()
+                if item is None:
+                    return
+                records, vectors = item
+                # A permanent error leaves these rows uncheckpointed for resume;
+                # transient errors are retried by RAGClient rather than skipped.
+                wait_for_resources(config)
+                client.upsert(_to_points(records, vectors))
+                writer_checkpoint.mark_many([(record.record_id, record.content_hash) for record in records])
+                stats.upserted += len(records)
+                stats.batches += 1
+                if stats.upserted % progress_every == 0:
+                    print(json.dumps(safe_event("progress", **stats.as_dict()), sort_keys=True), flush=True)
+        except BaseException as exc:
+            with writer_error_lock:
+                writer_errors.append(exc)
+            stop_writer.set()
+        finally:
+            if writer_checkpoint is not None:
+                writer_checkpoint.close()
+
+    def embed_and_enqueue(records: list[Record]) -> None:
+        vectors = client.embed([record.text for record in records])
+        while not stop_writer.is_set():
+            try:
+                completed.put((records, vectors), timeout=0.1)
+                return
+            except Full:
+                # The bounded completed queue is deliberate backpressure.
+                continue
+        raise RuntimeError("writer stopped before completed embedding batch could be persisted")
+
+    writer_thread = Thread(target=writer, name="hf-rag-writer")
+    writer_thread.start()
     try:
         with ThreadPoolExecutor(max_workers=config.embed_concurrency, thread_name_prefix="hf-rag-embed") as executor:
+            pending: deque[Future[None]] = deque()
+            max_in_flight = config.embed_concurrency + config.queue_depth
+
+            def submit(records: list[Record]) -> None:
+                pending.append(executor.submit(embed_and_enqueue, records))
+                if len(pending) >= max_in_flight:
+                    pending.popleft().result()
+                    if error := writer_failed():
+                        raise error
+
             for record in records_from_source(source, config, stats):
+                if error := writer_failed():
+                    raise error
                 if checkpoint.seen(record.record_id):
                     # Resume is visible separately from source-empty rows.
                     stats.skip("checkpoint_seen")
@@ -167,19 +217,29 @@ def ingest(source: Path, config: Config, *, progress_every: int = 100) -> Ingest
                 batch.append(record)
                 stats.accepted += 1
                 if len(batch) >= min(config.embed_batch_size, config.upsert_batch_size):
-                    wait_for_resources(config)
                     records = batch
                     batch = []
-                    pending.append((records, executor.submit(client.embed, [item.text for item in records])))
-                    if len(pending) >= config.embed_concurrency:
-                        flush_one()
+                    submit(records)
             if batch:
-                wait_for_resources(config)
-                pending.append((batch, executor.submit(client.embed, [item.text for item in batch])))
+                submit(batch)
             while pending:
-                flush_one()
+                pending.popleft().result()
+                if error := writer_failed():
+                    raise error
+        completed.put(None)
+        writer_thread.join()
+        if error := writer_failed():
+            raise error
         print(json.dumps(safe_event("complete", **stats.as_dict()), sort_keys=True), flush=True)
         return stats
+    except BaseException as exc:
+        stop_writer.set()
+        if writer_failed() is None and writer_thread.is_alive():
+            completed.put(None)
+        writer_thread.join()
+        if error := writer_failed():
+            raise error from exc
+        raise
     finally:
         client.close()
         checkpoint.close()

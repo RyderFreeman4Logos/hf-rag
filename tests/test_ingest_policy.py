@@ -129,3 +129,67 @@ def test_embedding_failure_is_loud_and_does_not_become_a_skip(
         assert checkpoint.count() == 0
     finally:
         checkpoint.close()
+
+
+class _WriterIndependentClient:
+    def __init__(self, _config: Config) -> None:
+        self.first_upsert_started = threading.Event()
+        self.third_embed_finished = threading.Event()
+        self.upserts = 0
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        index = int(texts[0].rsplit(" ", 1)[1])
+        if index == 0:
+            return [[0.0] * 4096]
+        assert self.first_upsert_started.wait(timeout=2), "writer did not begin the first upsert"
+        if index == 2:
+            self.third_embed_finished.set()
+        return [[0.0] * 4096]
+
+    def upsert(self, _points: list[dict[str, object]]) -> None:
+        self.upserts += 1
+        if self.upserts == 1:
+            self.first_upsert_started.set()
+            assert self.third_embed_finished.wait(timeout=2), (
+                "a blocked writer prevented the next embedding worker from running"
+            )
+
+    def close(self) -> None:
+        pass
+
+
+def test_bounded_completed_queue_keeps_embedding_independent_of_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A full completed queue may block workers, but never makes embedding serial with writing."""
+    from hf_rag import ingest as ingest_module
+
+    rows = [
+        RowItem("synthetic/data.jsonl", index, {"prompt": f"synthetic {index}"})
+        for index in range(3)
+    ]
+    holder: dict[str, _WriterIndependentClient] = {}
+
+    def client_factory(config: Config) -> _WriterIndependentClient:
+        client = _WriterIndependentClient(config)
+        holder["client"] = client
+        return client
+
+    monkeypatch.setattr(ingest_module, "iter_rows", lambda _source: iter(rows))
+    monkeypatch.setattr(ingest_module, "RAGClient", client_factory)
+    monkeypatch.setattr(ingest_module, "wait_for_resources", lambda _config: None)
+
+    stats = ingest_module.ingest(
+        Path("synthetic"),
+        Config(
+            checkpoint=tmp_path / "checkpoint.sqlite3",
+            embed_batch_size=1,
+            upsert_batch_size=1,
+            embed_concurrency=2,
+            queue_depth=1,
+        ),
+        progress_every=100,
+    )
+
+    assert stats.upserted == 3
+    assert holder["client"].upserts == 3
