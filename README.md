@@ -61,7 +61,7 @@ What `install.sh` does:
 
 1. Bootstraps **mise** (if missing) and **uv** (if missing).
 2. Shallow-clones/updates `https://github.com/RyderFreeman4Logos/hf-rag` at ref **`main`** into `$XDG_DATA_HOME/hf-rag/src` (default `~/.local/share/hf-rag/src`).
-3. Runs `uv tool install --from <checkout> ragctl` into `~/.local/bin`.
+3. Runs `uv tool install --from <checkout> hf-rag` (console script: `ragctl`) into `~/.local/bin`.
 4. Writes a mise shim for `ragctl`.
 
 Optional environment overrides (all non-interactive — safe under `curl | bash`):
