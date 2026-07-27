@@ -1,6 +1,7 @@
 [Unit]
 Description=hf-rag Qdrant rootless Docker stack
-After=default.target
+Wants=docker.service
+After=docker.service network-online.target
 
 [Service]
 Type=oneshot
@@ -8,6 +9,7 @@ RemainAfterExit=yes
 Environment=DOCKER_CONTEXT=rootless
 WorkingDirectory=/home/obj/srv/hf-rag/app/deploy
 ExecStart=/usr/bin/docker compose --env-file /home/obj/srv/hf-rag/etc/qdrant.env -f /home/obj/srv/hf-rag/app/deploy/compose.yaml up -d --remove-orphans
+# Deliberately omit -v: bind-mounted Qdrant storage must survive service stops.
 ExecStop=/usr/bin/docker compose --env-file /home/obj/srv/hf-rag/etc/qdrant.env -f /home/obj/srv/hf-rag/app/deploy/compose.yaml down
 TimeoutStartSec=120
 TimeoutStopSec=120

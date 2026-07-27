@@ -52,10 +52,13 @@ fi
 uv sync --frozen --no-dev
 mkdir -p "$HOME/.config/systemd/user"
 install -m 644 "$APP/deploy/systemd/qdrant.user.service" "$HOME/.config/systemd/user/qdrant.user.service"
+install -m 644 "$APP/deploy/systemd/qdrant-update.service" "$HOME/.config/systemd/user/qdrant-update.service"
+install -m 644 "$APP/deploy/systemd/qdrant-update.timer" "$HOME/.config/systemd/user/qdrant-update.timer"
+chmod 755 "$APP/deploy/scripts/qdrant-update.sh"
 install -m 644 "$APP/deploy/systemd/rag-ingest@.service" "$HOME/.config/systemd/user/rag-ingest@.service"
 systemctl --user daemon-reload
-systemctl --user enable qdrant.user.service
-systemctl --user start qdrant.user.service
+systemctl --user enable --now qdrant.user.service
+systemctl --user enable --now qdrant-update.timer
 set -a
 . "$ETC/ragctl.env"
 set +a

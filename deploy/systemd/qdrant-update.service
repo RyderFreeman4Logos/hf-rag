@@ -1,0 +1,10 @@
+[Unit]
+Description=Pull and recreate pinned hf-rag Qdrant image (retain data)
+Wants=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+Environment=DOCKER_CONTEXT=rootless
+ExecStart=/home/obj/srv/hf-rag/app/deploy/scripts/qdrant-update.sh
+TimeoutStartSec=10min
