@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hf-rag"
+version = "0.1.0"
+description = "Low-memory, safety-first Qdrant hybrid RAG ingestion for Hugging Face dataset archives"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "httpx==0.28.1",
+  "ijson==3.4.0.post0",
+  "platformdirs==4.3.8",
+  "pyarrow==20.0.0",
+  "tomli-w==1.2.0",
+  "typer==0.16.0",
+  "zstandard==0.23.0",
+]
+
+[project.scripts]
+ragctl = "hf_rag.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hf_rag"]
+
+[dependency-groups]
+dev = ["pytest==8.4.1", "pytest-httpx==0.35.0", "ruff==0.12.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

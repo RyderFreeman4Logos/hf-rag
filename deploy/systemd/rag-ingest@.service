@@ -1,0 +1,21 @@
+[Unit]
+Description=hf-rag safe archive ingest (%i)
+After=qdrant.user.service
+Requires=qdrant.user.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/home/obj/srv/hf-rag/etc/ragctl.env
+WorkingDirectory=/home/obj/srv/hf-rag/app
+ExecStart=/home/obj/srv/hf-rag/app/deploy/scripts/_ingest-worker.sh /home/obj/w/datasets.tar.zst
+MemoryMax=256M
+MemorySwapMax=0
+OOMPolicy=stop
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ReadWritePaths=/home/obj/srv/hf-rag/state /home/obj/srv/qdrant /tmp
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=default.target

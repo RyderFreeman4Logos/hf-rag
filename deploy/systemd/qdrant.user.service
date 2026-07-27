@@ -1,0 +1,16 @@
+[Unit]
+Description=hf-rag Qdrant rootless Docker stack
+After=default.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=DOCKER_CONTEXT=rootless
+WorkingDirectory=/home/obj/srv/hf-rag/app/deploy
+ExecStart=/usr/bin/docker compose --env-file /home/obj/srv/hf-rag/etc/qdrant.env -f /home/obj/srv/hf-rag/app/deploy/compose.yaml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file /home/obj/srv/hf-rag/etc/qdrant.env -f /home/obj/srv/hf-rag/app/deploy/compose.yaml down
+TimeoutStartSec=120
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

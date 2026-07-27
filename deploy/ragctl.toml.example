@@ -1,0 +1,47 @@
+[rag]
+qdrant_url = "http://127.0.0.1:6333"
+collection = "hf_eval_hybrid"
+qdrant_api_key_env = "QDRANT_API_KEY"
+embedding_url = "http://100.105.4.92:18002/v1/embeddings"
+embedding_model = "qwen3-embedding-8b"
+rerank_url = "http://100.105.4.92:18003/v1/rerank"
+rerank_model = "qwen3-reranker-8b"
+api_key_env = "GB10_API_KEY"
+timeout_seconds = 540
+
+[ingest]
+embed_batch_size = 4
+upsert_batch_size = 8
+min_mem_available_mib = 768
+max_qdrant_rss_mib = 700
+disk_free_mib = 1024
+log_full_text = false
+checkpoint = "/home/obj/srv/hf-rag/state/ingest.sqlite3"
+
+[[dataset_rule]]
+glob = "Bahushruth/abliteration-harmful-enriched/*"
+dataset_id = "abliteration-harmful-enriched"
+fields = ["goal", "target", "prompt", "text", "messages"]
+split = "unknown"
+language = "unknown"
+
+[[dataset_rule]]
+glob = "JailbreakBench/JBB-Behaviors/data/*"
+dataset_id = "jbb-behaviors"
+fields = ["Goal", "Target", "goal", "target", "prompt", "text"]
+split = "unknown"
+language = "en"
+
+[[dataset_rule]]
+glob = "TrustAIRLab/in-the-wild-jailbreak-prompts/*"
+dataset_id = "in-the-wild-jailbreak-prompts"
+fields = ["prompt", "text", "messages", "goal"]
+split = "unknown"
+language = "unknown"
+
+[[dataset_rule]]
+glob = "*"
+dataset_id = "hf-evaluation"
+fields = ["goal", "target", "prompt", "text", "messages", "instruction", "response"]
+split = "unknown"
+language = "unknown"

@@ -1,0 +1,13 @@
+{
+  "vectors": {
+    "dense": {"size": 4096, "distance": "Cosine", "on_disk": true}
+  },
+  "sparse_vectors": {
+    "bm25": {"index": {"on_disk": true}, "modifier": "idf"}
+  },
+  "hnsw_config": {"m": 8, "ef_construct": 32, "full_scan_threshold": 1000, "on_disk": true},
+  "optimizers_config": {"default_segment_number": 1, "indexing_threshold": 2000000, "memmap_threshold": 10000},
+  "wal_config": {"wal_capacity_mb": 4, "wal_segments_ahead": 0},
+  "on_disk_payload": true,
+  "strict_mode_config": {"enabled": true, "max_resident_memory_percent": 80}
+}
