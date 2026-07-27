@@ -20,6 +20,8 @@ Qdrant uses one worker/search/optimization/indexing thread, a small WAL, disk-ba
 - Probe output contains only archive/file paths, sizes, SHA-256, format, column **names**, row counts, and error **types**.
 - Checkpoints retain only deterministic record IDs and content hashes.
 - `search-json` stdin/stdout returns metadata and scores, never retrieved text. It does send selected text directly to the configured GB10 reranker as required; neither request nor response content is logged.
+- GB10 embedding/reranking retries only transient network, 408, 429, and 5xx failures with bounded exponential backoff; final errors contain only operation/status or exception type and attempt count.
+- The Typer CLI disables Rich pretty exceptions and local-variable rendering, so request payloads cannot be dumped in a traceback.
 - Tests use only synthetic benign strings.
 
 Do not `cat`, `head`, `tar -xOf`, `jq`, dataframe-print, or otherwise render the corpus or quarantine paths.
@@ -41,6 +43,30 @@ If GB10 uses a bearer key, supply it only as an environment variable to the inst
 ```sh
 GB10_API_KEY='…' ssh -o BatchMode=yes obj@mp /home/obj/srv/hf-rag/app/deploy/scripts/install-on-mp.sh
 ```
+
+## Install inside `raven-box hermes-shell ai-safety`
+
+`ragctl` is intentionally installed from a **local checkout**, not PyPI, and does not need `sudo`. From an `obj@mp` Hermes shell:
+
+```sh
+raven-box hermes-shell ai-safety
+bash /home/obj/srv/hf-rag/app/scripts/install-with-mise.sh
+# Start a new shell, or activate mise in the current Bash shell:
+eval "$(mise activate bash)"
+ragctl --help
+```
+
+The same command works from any checkout path; on the host deployment that path is `/home/obj/srv/hf-rag/app`. The installer prefers `uv tool install --from <local-checkout> ragctl`, runs `mise reshim`, and writes an explicit user-owned mise shim. If `uv` is unavailable it uses a dedicated venv under `$XDG_DATA_HOME/hf-rag/venv` (default `~/.local/share/hf-rag/venv`). If `mise` is missing it attempts the official `https://mise.run` bootstrap only when `curl` and network access are available; otherwise install mise first and rerun. It never requires `sudo`.
+
+From the checkout, the equivalent task entry points are:
+
+```sh
+mise run install
+mise run upgrade
+RAGCTL_CONFIG=/home/obj/srv/hf-rag/etc/ragctl.toml mise run doctor-smoke
+```
+
+`doctor-smoke` sends only the built-in benign fixtures (`hello world` and a fixed test query); it never reads an archive.
 
 ## Safe probe, ingest, verification
 

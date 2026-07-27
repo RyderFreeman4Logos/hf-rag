@@ -1,0 +1,18 @@
+[tasks.install]
+description = "Install local ragctl and a mise shim without sudo"
+run = "sh scripts/install-with-mise.sh"
+
+[tasks.upgrade]
+description = "Reinstall ragctl from the current local checkout"
+run = "RAGCTL_INSTALL_MODE=upgrade sh scripts/install-with-mise.sh"
+
+[tasks.doctor-smoke]
+description = "Run the live doctor using only its built-in benign fixtures"
+depends = ["install"]
+run = """
+if [ -n \"${RAGCTL_CONFIG:-}\" ]; then
+  ragctl doctor --config \"$RAGCTL_CONFIG\"
+else
+  ragctl doctor
+fi
+"""
