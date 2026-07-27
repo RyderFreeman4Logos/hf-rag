@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Iterable
 
 import httpx
@@ -10,6 +11,9 @@ from .sparse import sparse_vector
 
 class ServiceError(RuntimeError):
     pass
+
+
+GB10_MAX_ATTEMPTS = 6
 
 
 class RAGClient:
@@ -37,16 +41,42 @@ class RAGClient:
             raise ServiceError(f"{operation}: unexpected JSON type")
         return payload
 
+    def _gb10_post(
+        self, operation: str, url: str, headers: dict[str, str], payload: dict[str, Any]
+    ) -> httpx.Response:
+        """Post to GB10 with bounded retries while never rendering request content."""
+        for attempt in range(1, GB10_MAX_ATTEMPTS + 1):
+            try:
+                response = self.gb10.post(url, headers=headers, json=payload)
+            except httpx.RequestError as exc:
+                if attempt == GB10_MAX_ATTEMPTS:
+                    raise ServiceError(
+                        f"{operation}: network {type(exc).__name__} after {attempt} attempts"
+                    ) from None
+                time.sleep(min(2 ** (attempt - 1), 30))
+                continue
+
+            retryable = response.status_code in {408, 429} or response.status_code >= 500
+            if retryable and attempt == GB10_MAX_ATTEMPTS:
+                raise ServiceError(f"{operation}: HTTP {response.status_code} after {attempt} attempts")
+            if retryable:
+                time.sleep(min(2 ** (attempt - 1), 30))
+                continue
+            return response
+
+        raise AssertionError("unreachable")
+
     def health(self) -> bool:
         response = self.qdrant.get("/healthz")
         return response.status_code == 200
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         headers = {"Authorization": f"Bearer {key}"} if (key := self.config.api_key()) else {}
-        response = self.gb10.post(
+        response = self._gb10_post(
+            "embedding",
             self.config.embedding_url,
-            headers=headers,
-            json={"model": self.config.embedding_model, "input": texts},
+            headers,
+            {"model": self.config.embedding_model, "input": texts},
         )
         data = self._checked(response, "embedding").get("data")
         if not isinstance(data, list):
@@ -58,10 +88,11 @@ class RAGClient:
 
     def rerank(self, query: str, documents: list[str]) -> list[float]:
         headers = {"Authorization": f"Bearer {key}"} if (key := self.config.api_key()) else {}
-        response = self.gb10.post(
+        response = self._gb10_post(
+            "rerank",
             self.config.rerank_url,
-            headers=headers,
-            json={"model": self.config.rerank_model, "query": query, "documents": documents},
+            headers,
+            {"model": self.config.rerank_model, "query": query, "documents": documents},
         )
         body = self._checked(response, "rerank")
         results = body.get("results", body.get("data"))

@@ -14,7 +14,13 @@ from .probe import probe_archive
 from .safety import safe_event
 from .sparse import sparse_vector
 
-app = typer.Typer(add_completion=False, no_args_is_help=True)
+app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+    rich_markup_mode=None,
+)
 ConfigOption = Annotated[Path | None, typer.Option("--config", exists=True, readable=True)]
 
 
