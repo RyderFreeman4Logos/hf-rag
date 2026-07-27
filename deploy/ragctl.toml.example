@@ -8,9 +8,12 @@ rerank_url = "http://100.105.4.92:18003/v1/rerank"
 rerank_model = "qwen3-reranker-8b"
 api_key_env = "GB10_API_KEY"
 timeout_seconds = 540
+gb10_max_attempts = 100
+retry_max_sleep_seconds = 300
 
 [ingest]
 embed_batch_size = 4
+embed_concurrency = 8
 upsert_batch_size = 8
 min_mem_available_mib = 768
 max_qdrant_rss_mib = 700
@@ -21,27 +24,27 @@ checkpoint = "/home/obj/srv/hf-rag/state/ingest.sqlite3"
 [[dataset_rule]]
 glob = "Bahushruth/abliteration-harmful-enriched/*"
 dataset_id = "abliteration-harmful-enriched"
-fields = ["goal", "target", "prompt", "text", "messages"]
+fields = ["goal", "target", "prompt", "text", "messages", "instruction", "response", "input", "output", "question", "answer", "conversation", "content", "body"]
 split = "unknown"
 language = "unknown"
 
 [[dataset_rule]]
 glob = "JailbreakBench/JBB-Behaviors/data/*"
 dataset_id = "jbb-behaviors"
-fields = ["Goal", "Target", "goal", "target", "prompt", "text"]
+fields = ["Goal", "Target", "goal", "target", "prompt", "text", "messages", "instruction", "response", "input", "output", "question", "answer"]
 split = "unknown"
 language = "en"
 
 [[dataset_rule]]
 glob = "TrustAIRLab/in-the-wild-jailbreak-prompts/*"
 dataset_id = "in-the-wild-jailbreak-prompts"
-fields = ["prompt", "text", "messages", "goal"]
+fields = ["prompt", "text", "messages", "goal", "instruction", "input", "question", "conversation", "content", "body"]
 split = "unknown"
 language = "unknown"
 
 [[dataset_rule]]
 glob = "*"
 dataset_id = "hf-evaluation"
-fields = ["goal", "target", "prompt", "text", "messages", "instruction", "response"]
+fields = ["goal", "target", "prompt", "text", "messages", "instruction", "response", "input", "output", "question", "query", "answer", "completion", "chosen", "rejected", "conversation", "conversations", "human", "assistant", "content", "body"]
 split = "unknown"
 language = "unknown"

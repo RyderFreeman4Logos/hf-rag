@@ -10,7 +10,11 @@ from pathlib import Path
 class DatasetRule:
     glob: str = "*"
     dataset_id: str = "hf"
-    fields: tuple[str, ...] = ("goal", "target", "prompt", "text", "messages", "instruction", "response")
+    fields: tuple[str, ...] = (
+        "goal", "target", "prompt", "text", "messages", "instruction", "response", "input",
+        "output", "question", "query", "answer", "completion", "chosen", "rejected",
+        "conversation", "conversations", "human", "assistant", "content", "body",
+    )
     split: str = "unknown"
     language: str = "unknown"
 
@@ -26,7 +30,10 @@ class Config:
     rerank_model: str = "qwen3-reranker-8b"
     api_key_env: str = "GB10_API_KEY"
     timeout_seconds: float = 540.0
+    gb10_max_attempts: int = 100
+    retry_max_sleep_seconds: float = 300.0
     embed_batch_size: int = 4
+    embed_concurrency: int = 8
     upsert_batch_size: int = 8
     # Retrieval quality knobs (slow is OK). Defaults favor recall + rerank depth.
     dense_prefetch: int = 240
@@ -112,7 +119,10 @@ def load_config(path: Path | None) -> Config:
         rerank_model=str(rag.get("rerank_model", Config.rerank_model)),
         api_key_env=str(rag.get("api_key_env", Config.api_key_env)),
         timeout_seconds=float(rag.get("timeout_seconds", Config.timeout_seconds)),
+        gb10_max_attempts=int(rag.get("gb10_max_attempts", Config.gb10_max_attempts)),
+        retry_max_sleep_seconds=float(rag.get("retry_max_sleep_seconds", Config.retry_max_sleep_seconds)),
         embed_batch_size=int(ingest.get("embed_batch_size", Config.embed_batch_size)),
+        embed_concurrency=int(ingest.get("embed_concurrency", Config.embed_concurrency)),
         upsert_batch_size=int(ingest.get("upsert_batch_size", Config.upsert_batch_size)),
         dense_prefetch=int(retrieval.get("dense_prefetch", Config.dense_prefetch)),
         bm25_prefetch=int(retrieval.get("bm25_prefetch", Config.bm25_prefetch)),

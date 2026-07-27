@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import time
 from typing import Any, Iterable
 
@@ -13,7 +14,7 @@ class ServiceError(RuntimeError):
     pass
 
 
-GB10_MAX_ATTEMPTS = 6
+GB10_MAX_ATTEMPTS = 100
 
 
 class RAGClient:
@@ -44,15 +45,6 @@ class RAGClient:
     def _map_transport_error(self, operation: str, exc: Exception) -> ServiceError:
         """Never include request bodies; include short connectivity hints."""
         name = type(exc).__name__
-        url = self.config.qdrant_url if operation.startswith("qdrant") or operation in {
-            "health",
-            "count",
-            "collection info",
-            "upsert",
-            "query",
-            "create collection",
-            "create payload index",
-        } else ""
         hint = ""
         if "ConnectError" in name or "ConnectTimeout" in name or "Connection refused" in str(exc):
             hint = (
@@ -66,23 +58,31 @@ class RAGClient:
     def _gb10_post(
         self, operation: str, url: str, headers: dict[str, str], payload: dict[str, Any]
     ) -> httpx.Response:
-        """Post to GB10 with bounded retries while never rendering request content."""
-        for attempt in range(1, GB10_MAX_ATTEMPTS + 1):
+        """Post to GB10 with long retry budgets while never rendering request content."""
+        max_attempts = max(1, self.config.gb10_max_attempts)
+        max_sleep = max(0.0, self.config.retry_max_sleep_seconds)
+
+        def retry_sleep(attempt: int) -> None:
+            # Jitter avoids eight concurrent workers retrying in lockstep.
+            ceiling = min(float(2 ** min(attempt - 1, 20)), max_sleep)
+            time.sleep(random.uniform(ceiling * 0.5, ceiling) if ceiling else 0.0)
+
+        for attempt in range(1, max_attempts + 1):
             try:
                 response = self.gb10.post(url, headers=headers, json=payload)
             except httpx.RequestError as exc:
-                if attempt == GB10_MAX_ATTEMPTS:
+                if attempt == max_attempts:
                     raise ServiceError(
                         f"{operation}: network {type(exc).__name__} after {attempt} attempts"
                     ) from None
-                time.sleep(min(2 ** (attempt - 1), 30))
+                retry_sleep(attempt)
                 continue
 
             retryable = response.status_code in {408, 429} or response.status_code >= 500
-            if retryable and attempt == GB10_MAX_ATTEMPTS:
+            if retryable and attempt == max_attempts:
                 raise ServiceError(f"{operation}: HTTP {response.status_code} after {attempt} attempts")
             if retryable:
-                time.sleep(min(2 ** (attempt - 1), 30))
+                retry_sleep(attempt)
                 continue
             return response
 

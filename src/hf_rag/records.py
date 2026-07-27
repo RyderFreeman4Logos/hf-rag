@@ -14,7 +14,18 @@ class Record:
     metadata: dict[str, str | int]
 
 
-def _string(value: Any) -> str:
+_GENERIC_NON_TEXT_FIELDS = frozenset(
+    {
+        "id", "_id", "uuid", "index", "row_index", "split", "language", "lang", "category",
+        "label", "labels", "dataset", "dataset_id", "task", "score", "rank", "metadata", "meta",
+    }
+)
+
+
+def _string(value: Any, *, depth: int = 0) -> str:
+    """Extract text from common HF nested values without serializing it anywhere else."""
+    if depth > 8:
+        return ""
     if value is None:
         return ""
     if isinstance(value, str):
@@ -22,19 +33,31 @@ def _string(value: Any) -> str:
     if isinstance(value, (int, float, bool)):
         return str(value)
     if isinstance(value, list):
-        return "\n".join(part for item in value if (part := _string(item)))
+        return "\n".join(part for item in value if (part := _string(item, depth=depth + 1)))
     if isinstance(value, Mapping):
         for key in ("content", "text", "value", "message"):
-            if (part := _string(value.get(key))):
+            if (part := _string(value.get(key), depth=depth + 1)):
                 return part
+        return "\n".join(
+            part for item in value.values() if (part := _string(item, depth=depth + 1))
+        )
     return ""
 
 
-def build_record(
-    *, dataset_path: str, row_index: int, row: Mapping[str, Any], field_priority: Sequence[str], dataset_id: str,
-    split: str = "unknown", language: str = "unknown", max_chars: int = 24_000,
-) -> Record | None:
-    """Build a deterministic retrieval record without serializing raw fields elsewhere."""
+def _has_textual_value(value: Any, *, depth: int = 0) -> bool:
+    """Keep generic fallback from turning numeric-only metadata into retrieval documents."""
+    if depth > 8:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(_has_textual_value(item, depth=depth + 1) for item in value)
+    if isinstance(value, Mapping):
+        return any(_has_textual_value(item, depth=depth + 1) for item in value.values())
+    return False
+
+
+def _retrieval_text(row: Mapping[str, Any], field_priority: Sequence[str]) -> str:
     canonical = {str(key).casefold(): value for key, value in row.items()}
     values: list[str] = []
     seen: set[str] = set()
@@ -45,7 +68,24 @@ def build_record(
         seen.add(key)
         if (value := _string(canonical.get(key))):
             values.append(value)
-    text = "\n\n".join(values).strip()
+
+    # HF datasets vary substantially. If configured fields are absent, retain any
+    # textual, non-metadata field rather than silently discarding a valid source row.
+    if not values:
+        for key, raw_value in canonical.items():
+            if key in seen or key in _GENERIC_NON_TEXT_FIELDS or not _has_textual_value(raw_value):
+                continue
+            if (value := _string(raw_value)):
+                values.append(value)
+    return "\n\n".join(values).strip()
+
+
+def build_record(
+    *, dataset_path: str, row_index: int, row: Mapping[str, Any], field_priority: Sequence[str], dataset_id: str,
+    split: str = "unknown", language: str = "unknown", max_chars: int = 24_000,
+) -> Record | None:
+    """Build a deterministic retrieval record without serializing raw fields elsewhere."""
+    text = _retrieval_text(row, field_priority)
     if not text:
         return None
     text = text[:max_chars]

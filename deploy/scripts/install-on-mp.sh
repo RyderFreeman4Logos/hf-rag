@@ -55,6 +55,7 @@ install -m 644 "$APP/deploy/systemd/qdrant.user.service" "$HOME/.config/systemd/
 install -m 644 "$APP/deploy/systemd/qdrant-update.service" "$HOME/.config/systemd/user/qdrant-update.service"
 install -m 644 "$APP/deploy/systemd/qdrant-update.timer" "$HOME/.config/systemd/user/qdrant-update.timer"
 chmod 755 "$APP/deploy/scripts/qdrant-update.sh"
+chmod 755 "$APP/deploy/scripts/start-ingest-nohup.sh"
 install -m 644 "$APP/deploy/systemd/rag-ingest@.service" "$HOME/.config/systemd/user/rag-ingest@.service"
 systemctl --user daemon-reload
 systemctl --user enable --now qdrant.user.service

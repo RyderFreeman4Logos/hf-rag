@@ -25,8 +25,10 @@ class SequencedGB10:
         return outcome
 
 
-def _client_with(outcomes: list[httpx.Response | Exception]) -> tuple[RAGClient, SequencedGB10]:
-    client = RAGClient(Config())
+def _client_with(
+    outcomes: list[httpx.Response | Exception], config: Config | None = None
+) -> tuple[RAGClient, SequencedGB10]:
+    client = RAGClient(config or Config())
     fake = SequencedGB10(outcomes)
     client.gb10.close()
     client.gb10 = fake  # type: ignore[assignment]
@@ -77,7 +79,7 @@ def test_exhausted_transient_error_is_short_and_never_contains_input(monkeypatch
     from hf_rag import client as client_module
 
     text = "synthetic benign source"
-    client, fake = _client_with([httpx.Response(502) for _ in range(6)])
+    client, fake = _client_with([httpx.Response(502) for _ in range(3)], Config(gb10_max_attempts=3))
     monkeypatch.setattr(client_module.time, "sleep", lambda _seconds: None)
 
     try:
@@ -86,9 +88,17 @@ def test_exhausted_transient_error_is_short_and_never_contains_input(monkeypatch
     finally:
         client.close()
 
-    assert len(fake.calls) == 6
-    assert str(exc_info.value) == "embedding: HTTP 502 after 6 attempts"
+    assert len(fake.calls) == 3
+    assert str(exc_info.value) == "embedding: HTTP 502 after 3 attempts"
     assert text not in str(exc_info.value)
+
+
+def test_default_gb10_retry_budget_is_extreme() -> None:
+    config = Config()
+
+    assert config.timeout_seconds >= 540
+    assert config.gb10_max_attempts >= 50
+    assert config.retry_max_sleep_seconds >= 120
 
 
 def test_cli_disables_typer_pretty_exceptions() -> None:

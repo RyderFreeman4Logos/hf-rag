@@ -7,10 +7,10 @@ This project indexes a Hugging Face-style archive into **Qdrant 1.18.3** with na
 | Component | Enforced limit | Swap |
 |---|---:|---:|
 | Qdrant container | `mem_limit=768m` | `memswap_limit=768m` (no swap) |
-| ingest `ragctl` user service | `MemoryMax=256M` | `MemorySwapMax=0` |
+| ingest `ragctl` user service | `MemoryMax=512M` | `MemorySwapMax=0` |
 | steady combined budget | **<= 1 GiB** | **none** |
 
-Qdrant uses one worker/search/optimization/indexing thread, a small WAL, disk-backed dense/sparse/HNSW/payload data, HNSW `m=8`, and collection strict mode at 80%. Ingest is single-concurrency with embedding batches of four and upserts no larger than eight. Search is a short-lived client process; do not run multiple searches while ingest is active.
+Qdrant uses one worker/search/optimization/indexing thread, a small WAL, disk-backed dense/sparse/HNSW/payload data, HNSW `m=8`, and collection strict mode at 80%. Ingest has up to eight concurrent GB10 embedding requests, embedding batches of four, and serial upserts no larger than eight. Search is a short-lived client process; do not run multiple searches while ingest is active.
 
 ## Safety policy
 
@@ -141,8 +141,12 @@ RAGCTL_CONFIG=/home/obj/srv/hf-rag/etc/ragctl.toml mise run doctor-smoke
 # Writes /home/obj/srv/hf-rag/structure.json with structure only.
 ssh -o BatchMode=yes obj@mp /home/obj/srv/hf-rag/app/deploy/scripts/safe-probe-archive.sh
 
-# Runs under the 256 MiB/no-swap user systemd service; output is counts only.
+# Optional systemd path: runs under the 512 MiB/no-swap user service; output is counts only.
 ssh -o BatchMode=yes obj@mp /home/obj/srv/hf-rag/app/deploy/scripts/ingest-datasets.sh
+
+# Preferred durable host path: start via nohup; counts-only output appends here.
+ssh -o BatchMode=yes obj@mp /home/obj/srv/hf-rag/app/deploy/scripts/start-ingest-nohup.sh
+# /home/obj/srv/hf-rag/logs/ingest.nohup.log
 
 ssh -o BatchMode=yes obj@mp 'set -a; . /home/obj/srv/hf-rag/etc/ragctl.env; set +a; \
  /home/obj/srv/hf-rag/app/.venv/bin/ragctl doctor --config /home/obj/srv/hf-rag/etc/ragctl.toml; \
