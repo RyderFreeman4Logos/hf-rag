@@ -44,21 +44,52 @@ If GB10 uses a bearer key, supply it only as an environment variable to the inst
 GB10_API_KEY='…' ssh -o BatchMode=yes obj@mp /home/obj/srv/hf-rag/app/deploy/scripts/install-on-mp.sh
 ```
 
-## Install inside `raven-box hermes-shell ai-safety`
+## Install inside a container / `raven-box hermes-shell ai-safety`
 
-`ragctl` is intentionally installed from a **local checkout**, not PyPI, and does not need `sudo`. From an `obj@mp` Hermes shell:
+Preferred one-liner (pulls **GitHub `main`**, no sudo, no corpus access):
 
 ```sh
 raven-box hermes-shell ai-safety
-bash /home/obj/srv/hf-rag/app/scripts/install-with-mise.sh
-# Start a new shell, or activate mise in the current Bash shell:
+curl -fsSL https://raw.githubusercontent.com/RyderFreeman4Logos/hf-rag/main/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+# optional if you use mise shims:
 eval "$(mise activate bash)"
 ragctl --help
 ```
 
-The same command works from any checkout path; on the host deployment that path is `/home/obj/srv/hf-rag/app`. The installer prefers `uv tool install --from <local-checkout> ragctl`, runs `mise reshim`, and writes an explicit user-owned mise shim. If `uv` is unavailable it uses a dedicated venv under `$XDG_DATA_HOME/hf-rag/venv` (default `~/.local/share/hf-rag/venv`). If `mise` is missing it attempts the official `https://mise.run` bootstrap only when `curl` and network access are available; otherwise install mise first and rerun. It never requires `sudo`.
+What `install.sh` does:
 
-From the checkout, the equivalent task entry points are:
+1. Bootstraps **mise** (if missing) and **uv** (if missing).
+2. Shallow-clones/updates `https://github.com/RyderFreeman4Logos/hf-rag` at ref **`main`** into `$XDG_DATA_HOME/hf-rag/src` (default `~/.local/share/hf-rag/src`).
+3. Runs `uv tool install --from <checkout> ragctl` into `~/.local/bin`.
+4. Writes a mise shim for `ragctl`.
+
+Optional environment overrides (all non-interactive — safe under `curl | bash`):
+
+| Variable | Default |
+|---|---|
+| `HF_RAG_REPO` | `https://github.com/RyderFreeman4Logos/hf-rag.git` |
+| `HF_RAG_REF` | `main` |
+| `HF_RAG_DIR` | `$XDG_DATA_HOME/hf-rag/src` |
+| `UV_TOOL_BIN_DIR` | `$HOME/.local/bin` |
+
+Example pin to a tag:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/RyderFreeman4Logos/hf-rag/main/install.sh \
+  | HF_RAG_REF=v0.1.0 bash
+```
+
+### Offline / already-synced checkout
+
+If the repo is already on disk (host deploy path):
+
+```sh
+bash /home/obj/srv/hf-rag/app/scripts/install-with-mise.sh
+eval "$(mise activate bash)"
+```
+
+Or from any checkout:
 
 ```sh
 mise run install
