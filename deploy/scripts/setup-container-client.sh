@@ -123,16 +123,18 @@ docker exec -i "$CONTAINER" sh -lc '
 ' < "$CONTAINER_CREDENTIALS"
 rm -f "$CONTAINER_CREDENTIALS"
 
-# PATH-only helper for interactive shells. Auth and config discovery live in
-# ragctl itself so non-interactive Hermes tool shells need not source anything.
+# Put the real uv console script on PATH through a symlink, never a shell
+# wrapper. `uv tool` often makes its global bin a symlink already; redirecting
+# into that path would overwrite the real script and recurse.
 docker exec "$CONTAINER" sh -lc '
   mkdir -p /opt/data/.local/bin /opt/data/.local/share/uv/tools/hf-rag/bin
-  # Always restore the real Python console script under uv tools bin.
-  # Never install a wrapper there (a recursive wrapper caused hangs).
   PY=/opt/data/.local/share/uv/tools/hf-rag/bin/python
   REAL=/opt/data/.local/share/uv/tools/hf-rag/bin/ragctl
-  if [ -x "$PY" ]; then
-    cat > "$REAL" <<'"'"'PYBIN'"'"'
+  if [ ! -x "$PY" ]; then
+    printf "%s\\n" "ragctl Python missing at $PY" >&2
+    exit 127
+  fi
+  cat > "$REAL" <<'"'"'PYBIN'"'"'
 #!/opt/data/.local/share/uv/tools/hf-rag/bin/python
 # -*- coding: utf-8 -*-
 import sys
@@ -141,22 +143,9 @@ if __name__ == "__main__":
     sys.argv[0] = "ragctl"
     app()
 PYBIN
-    chmod 755 "$REAL"
-  fi
-
-  if [ -x "$REAL" ]; then
-    cat > /opt/data/.local/bin/ragctl <<'"'"'WRAP'"'"'
-#!/bin/sh
-# PATH-only hf-rag launcher. ragctl resolves config and credentials itself.
-REAL="/opt/data/.local/share/uv/tools/hf-rag/bin/ragctl"
-if [ ! -x "$REAL" ]; then
-  printf "%s\\n" "ragctl: real binary missing at $REAL" >&2
-  exit 127
-fi
-exec "$REAL" "$@"
-WRAP
-    chmod 755 /opt/data/.local/bin/ragctl
-  fi
+  chmod 755 "$REAL"
+  rm -f /opt/data/.local/bin/ragctl
+  ln -s "$REAL" /opt/data/.local/bin/ragctl
   ln -sfn /opt/data/.local/bin/ragctl /usr/local/bin/ragctl 2>/dev/null || true
 
   snip=/opt/data/.config/hf-rag/path.sh
