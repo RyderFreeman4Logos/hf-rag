@@ -92,16 +92,22 @@ def safe_probe(source: Annotated[Path, typer.Argument(exists=True, readable=True
 
 
 @app.command("search-json")
-def search_json(config: ConfigOption = None) -> None:
+def search_json(
+    config: ConfigOption = None,
+    include_text: Annotated[bool, typer.Option("--include-text", help="Include payload text (for interactive review only)")] = False,
+) -> None:
     def _go(client: RAGClient, _cfg) -> None:
         for line in sys.stdin:
             try:
                 request = json.loads(line)
                 query = request.get("query") if isinstance(request, dict) else None
-                limit = request.get("limit", 8) if isinstance(request, dict) else 8
-                if not isinstance(query, str) or not isinstance(limit, int) or not 1 <= limit <= 32:
+                limit = request.get("limit", 20) if isinstance(request, dict) else 20
+                want_text = include_text
+                if isinstance(request, dict) and "include_text" in request:
+                    want_text = bool(request.get("include_text"))
+                if not isinstance(query, str) or not isinstance(limit, int) or not 1 <= limit <= 64:
                     raise ValueError("invalid request")
-                _emit({"results": client.safe_hits(client.search(query, limit))})
+                _emit({"results": client.safe_hits(client.search(query, limit), include_text=want_text)})
             except (ValueError, ServiceError, OSError) as exc:
                 _emit({"error_type": type(exc).__name__, "message": str(exc) if isinstance(exc, ServiceError) else type(exc).__name__})
 
@@ -109,9 +115,14 @@ def search_json(config: ConfigOption = None) -> None:
 
 
 @app.command()
-def search(query: Annotated[str, typer.Option("--query")], limit: Annotated[int, typer.Option("--limit")] = 8, config: ConfigOption = None) -> None:
+def search(
+    query: Annotated[str, typer.Option("--query")],
+    limit: Annotated[int, typer.Option("--limit")] = 20,
+    include_text: Annotated[bool, typer.Option("--include-text")] = False,
+    config: ConfigOption = None,
+) -> None:
     def _go(client: RAGClient, _cfg) -> None:
-        _emit({"results": client.safe_hits(client.search(query, limit))})
+        _emit({"results": client.safe_hits(client.search(query, limit), include_text=include_text)})
 
     _run_client(config, _go)
 

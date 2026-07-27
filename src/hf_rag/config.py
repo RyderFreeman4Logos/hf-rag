@@ -28,6 +28,10 @@ class Config:
     timeout_seconds: float = 540.0
     embed_batch_size: int = 4
     upsert_batch_size: int = 8
+    # Retrieval quality knobs (slow is OK). Defaults favor recall + rerank depth.
+    dense_prefetch: int = 240
+    bm25_prefetch: int = 240
+    fused_limit: int = 120
     min_mem_available_mib: int = 768
     max_qdrant_rss_mib: int = 700
     disk_free_mib: int = 1024
@@ -87,6 +91,7 @@ def load_config(path: Path | None) -> Config:
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
     rag = raw.get("rag", {})
     ingest = raw.get("ingest", {})
+    retrieval = raw.get("retrieval", {})
     rules = tuple(
         DatasetRule(
             glob=str(rule.get("glob", "*")), dataset_id=str(rule.get("dataset_id", "hf")),
@@ -109,6 +114,9 @@ def load_config(path: Path | None) -> Config:
         timeout_seconds=float(rag.get("timeout_seconds", Config.timeout_seconds)),
         embed_batch_size=int(ingest.get("embed_batch_size", Config.embed_batch_size)),
         upsert_batch_size=int(ingest.get("upsert_batch_size", Config.upsert_batch_size)),
+        dense_prefetch=int(retrieval.get("dense_prefetch", Config.dense_prefetch)),
+        bm25_prefetch=int(retrieval.get("bm25_prefetch", Config.bm25_prefetch)),
+        fused_limit=int(retrieval.get("fused_limit", Config.fused_limit)),
         min_mem_available_mib=int(ingest.get("min_mem_available_mib", Config.min_mem_available_mib)),
         max_qdrant_rss_mib=int(ingest.get("max_qdrant_rss_mib", Config.max_qdrant_rss_mib)),
         disk_free_mib=int(ingest.get("disk_free_mib", Config.disk_free_mib)),

@@ -179,16 +179,21 @@ class RAGClient:
     def search(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
         """Qdrant v1.18 query API: named dense + sparse prefetch fused by server-side RRF."""
         dense = self.embed([query])[0]
+        dense_k = max(self.config.dense_prefetch, limit * 8)
+        bm25_k = max(self.config.bm25_prefetch, limit * 8)
+        fused_k = max(self.config.fused_limit, limit * 4)
         try:
             body = self._checked(
                 self.qdrant.post(
                     f"/collections/{self.config.collection}/points/query",
                     json={
                         "prefetch": [
-                            {"query": dense, "using": "dense", "limit": limit * 3},
-                            {"query": sparse_vector(query), "using": "bm25", "limit": limit * 3},
+                            {"query": dense, "using": "dense", "limit": dense_k},
+                            {"query": sparse_vector(query), "using": "bm25", "limit": bm25_k},
                         ],
-                        "query": {"fusion": "rrf"}, "limit": limit * 2, "with_payload": True,
+                        "query": {"fusion": "rrf"},
+                        "limit": fused_k,
+                        "with_payload": True,
                     },
                 ),
                 "hybrid RRF query",
@@ -202,22 +207,32 @@ class RAGClient:
         docs = [str(item.get("payload", {}).get("text", "")) for item in fused]
         if not docs:
             return []
+        # Rerank all fused candidates (quality over speed).
         reranked = self.rerank(query, docs)
         for item, score in zip(fused, reranked):
             item["rerank_score"] = score
         return sorted(fused, key=lambda item: float(item["rerank_score"]), reverse=True)[:limit]
 
     @staticmethod
-    def safe_hits(hits: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    def safe_hits(hits: Iterable[dict[str, Any]], *, include_text: bool = False) -> list[dict[str, Any]]:
+        """Project hits. Text is opt-in for interactive search (never for logs)."""
         output = []
         for hit in hits:
             payload = hit.get("payload", {})
             if not isinstance(payload, dict):
                 payload = {}
-            output.append({
+            row = {
                 "record_id": payload.get("record_id", hit.get("id")),
                 "score": hit.get("rerank_score", hit.get("score")),
-                "dataset_id": payload.get("dataset_id"), "split": payload.get("split"),
-                "language": payload.get("language"), "content_hash": payload.get("content_hash"),
-            })
+                "dataset_id": payload.get("dataset_id"),
+                "split": payload.get("split"),
+                "language": payload.get("language"),
+                "content_hash": payload.get("content_hash"),
+            }
+            if include_text:
+                # Explicit opt-in for Hermes skill / interactive review only.
+                text = payload.get("text")
+                if isinstance(text, str):
+                    row["text"] = text
+            output.append(row)
         return output

@@ -41,6 +41,12 @@ rerank_model = "qwen3-reranker-8b"
 api_key_env = "GB10_API_KEY"
 timeout_seconds = 540
 
+[retrieval]
+# Max quality defaults (latency acceptable)
+dense_prefetch = 240
+bm25_prefetch = 240
+fused_limit = 120
+
 [ingest]
 embed_batch_size = 4
 upsert_batch_size = 8
@@ -51,11 +57,11 @@ checkpoint = "/opt/data/.local/share/hf-rag/ingest.sqlite3"
 log_full_text = false
 EOF
 
-# env file inside container (0600)
+# env file inside container. Interactive hermes-shell runs as user `hermes`
+# (uid 10000), not root — so root-only 0600 causes: Permission denied.
 docker exec -i -e QK="$QDRANT_API_KEY" -e GK="${GB10_API_KEY:-}" "$CONTAINER" sh -lc '
   umask 077
   printf "QDRANT_API_KEY=%s\nGB10_API_KEY=%s\nRAGCTL_CONFIG=/opt/data/.config/hf-rag/ragctl.toml\n" "$QK" "$GK" > /opt/data/.config/hf-rag/ragctl.env
-  chmod 600 /opt/data/.config/hf-rag/ragctl.env
 '
 
 # PATH helper for interactive shells (HOME may be /root while tools live under /opt/data)
@@ -64,29 +70,45 @@ docker exec "$CONTAINER" sh -lc '
   if [ -x /opt/data/.local/bin/ragctl ]; then
     ln -sfn /opt/data/.local/bin/ragctl /usr/local/bin/ragctl 2>/dev/null || true
   fi
-  # profile snippet
+  # profile snippet — never hard-fail if env is unreadable
   snip=/opt/data/.config/hf-rag/path.sh
   cat > "$snip" <<'\''EOS'\''
 # hf-rag client path + env (sourced by hermes shells)
-export PATH="/opt/data/.local/bin:/opt/data/.local/share/mise/shims:$PATH"
-if [ -f /opt/data/.config/hf-rag/ragctl.env ]; then
+export PATH="/opt/data/.local/bin:/opt/data/.local/share/mise/shims:${PATH:-}"
+if [ -r /opt/data/.config/hf-rag/ragctl.env ]; then
   set -a
   # shellcheck disable=SC1091
   . /opt/data/.config/hf-rag/ragctl.env
   set +a
+elif [ -f /opt/data/.config/hf-rag/ragctl.env ]; then
+  printf "%s\n" "hf-rag: cannot read /opt/data/.config/hf-rag/ragctl.env (permission denied). Run on host: sh /home/obj/srv/hf-rag/app/deploy/scripts/setup-container-client.sh" >&2
 fi
+export RAGCTL_CONFIG="${RAGCTL_CONFIG:-/opt/data/.config/hf-rag/ragctl.toml}"
 EOS
+  # Ownership: hermes-shell sessions are often user hermes on /opt/data volume.
+  if id hermes >/dev/null 2>&1; then
+    chown -R hermes:hermes /opt/data/.config/hf-rag
+    chmod 750 /opt/data/.config/hf-rag
+    chmod 640 /opt/data/.config/hf-rag/ragctl.env
+    chmod 644 /opt/data/.config/hf-rag/ragctl.toml /opt/data/.config/hf-rag/path.sh
+  else
+    chmod 755 /opt/data/.config/hf-rag
+    chmod 644 /opt/data/.config/hf-rag/ragctl.env /opt/data/.config/hf-rag/ragctl.toml /opt/data/.config/hf-rag/path.sh
+  fi
   for rc in /opt/data/.bashrc /root/.bashrc; do
     if [ -f "$rc" ] || mkdir -p "$(dirname "$rc")" 2>/dev/null; then
       touch "$rc"
       if ! grep -q "hf-rag/path.sh" "$rc" 2>/dev/null; then
         printf "\n# hf-rag\n[ -f %s ] && . %s\n" "$snip" "$snip" >> "$rc"
       fi
+      if id hermes >/dev/null 2>&1 && [ -f /opt/data/.bashrc ]; then
+        chown hermes:hermes /opt/data/.bashrc 2>/dev/null || true
+      fi
     fi
   done
 '
 
-# Smoke: help + doctor (counts/status only)
+# Smoke as root and as hermes (the interactive user)
 docker exec "$CONTAINER" sh -lc '
   . /opt/data/.config/hf-rag/path.sh
   command -v ragctl
@@ -94,4 +116,23 @@ docker exec "$CONTAINER" sh -lc '
   ragctl doctor --config /opt/data/.config/hf-rag/ragctl.toml
   ragctl stats --config /opt/data/.config/hf-rag/ragctl.toml
 '
+if docker exec "$CONTAINER" id hermes >/dev/null 2>&1; then
+  docker exec -u hermes "$CONTAINER" sh -lc '
+    . /opt/data/.config/hf-rag/path.sh
+    command -v ragctl
+    ragctl stats --config /opt/data/.config/hf-rag/ragctl.toml
+  '
+fi
+
+# Install query-only Hermes skill into box skill roots (hermes user)
+APP_SKILL_SRC="$APP_ROOT/hermes-skills/private-hf-corpus-search"
+if [ -d "$APP_SKILL_SRC" ]; then
+  for dest in /opt/data/skills/private-hf-corpus-search /opt/data/.agents/skills/private-hf-corpus-search; do
+    docker exec "$CONTAINER" sh -lc "mkdir -p $(dirname $dest)"
+    # copy via tar to preserve perms as hermes
+    tar -C "$APP_SKILL_SRC" -cf - . | docker exec -i -u hermes "$CONTAINER" sh -lc "mkdir -p $dest && tar -C $dest -xf - && chmod -R u+rwX,go+rX $dest"
+  done
+  printf '%s\n' "skill_installed private-hf-corpus-search"
+fi
+
 printf '%s\n' "container_client_ready container=$CONTAINER qdrant=http://${QDRANT_ALIAS}:6333"
