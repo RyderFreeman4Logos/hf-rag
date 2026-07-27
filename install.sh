@@ -89,9 +89,10 @@ fetch_src() {
 install_ragctl() {
   mkdir -p "$BIN_DIR"
   if command -v uv >/dev/null 2>&1; then
-    log "installing ragctl via uv tool install"
-    UV_TOOL_BIN_DIR="$BIN_DIR" uv tool install --from "$SRC_DIR" --force --python 3.11 ragctl \
-      || UV_TOOL_BIN_DIR="$BIN_DIR" uv tool install --from "$SRC_DIR" --force ragctl \
+    # Project name is hf-rag; console script entry point is ragctl.
+    log "installing package hf-rag (script: ragctl) via uv tool install"
+    UV_TOOL_BIN_DIR="$BIN_DIR" uv tool install --from "$SRC_DIR" --force --python 3.11 hf-rag \
+      || UV_TOOL_BIN_DIR="$BIN_DIR" uv tool install --from "$SRC_DIR" --force hf-rag \
       || die "uv tool install failed"
     RAGCTL_BIN="$BIN_DIR/ragctl"
   else
