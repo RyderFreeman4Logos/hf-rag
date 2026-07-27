@@ -188,14 +188,14 @@ EOS
   done
 '
 
-# Smoke the actual execution path. The final call deliberately has no inherited
-# key variables, no RAGCTL_CONFIG, and no sourced shell profile.
+# Smoke Qdrant authentication without calling external embedding/rerank services.
+# The final call deliberately has no inherited key variables, no RAGCTL_CONFIG,
+# and no sourced shell profile.
 docker exec "$CONTAINER" sh -lc '
   PATH=/opt/data/.local/bin:/opt/data/.local/share/mise/shims:$PATH
   export PATH
   command -v ragctl
   ragctl --help >/dev/null
-  ragctl doctor
   ragctl stats
 '
 docker exec -u hermes "$CONTAINER" sh -lc '
