@@ -1,3 +1,7 @@
+# Optional: join a Hermes/raven-box private network so containers can reach Qdrant
+# without publishing 6333 beyond loopback. Create/attach with:
+#   docker network connect hermes-ai-safety_private deploy-qdrant-1
+# Or set HF_RAG_HERMES_NETWORK=hermes-ai-safety_private before compose up.
 services:
   qdrant:
     image: qdrant/qdrant:v1.18.3
@@ -7,6 +11,7 @@ services:
     cpus: "1.0"
     pids_limit: 128
     ports:
+      # Host-local only (not LAN/tailscale). Containers use docker network alias.
       - "127.0.0.1:6333:6333"
     env_file:
       - /home/obj/srv/hf-rag/etc/qdrant.env
@@ -19,3 +24,12 @@ services:
       - /tmp:rw,noexec,nosuid,size=64m
     security_opt:
       - no-new-privileges:true
+    networks:
+      - default
+      - hermes_clients
+
+networks:
+  default:
+  hermes_clients:
+    name: ${HF_RAG_HERMES_NETWORK:-hermes-ai-safety_private}
+    external: true

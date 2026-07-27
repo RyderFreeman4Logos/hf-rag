@@ -41,6 +41,28 @@ class RAGClient:
             raise ServiceError(f"{operation}: unexpected JSON type")
         return payload
 
+    def _map_transport_error(self, operation: str, exc: Exception) -> ServiceError:
+        """Never include request bodies; include short connectivity hints."""
+        name = type(exc).__name__
+        url = self.config.qdrant_url if operation.startswith("qdrant") or operation in {
+            "health",
+            "count",
+            "collection info",
+            "upsert",
+            "query",
+            "create collection",
+            "create payload index",
+        } else ""
+        hint = ""
+        if "ConnectError" in name or "ConnectTimeout" in name or "Connection refused" in str(exc):
+            hint = (
+                " connection refused;"
+                " if running inside hermes/raven container, Qdrant loopback is not shared —"
+                " use docker-network URL (e.g. http://deploy-qdrant-1:6333) via"
+                " RAGCTL_CONFIG and run deploy/scripts/setup-container-client.sh on the host"
+            )
+        return ServiceError(f"{operation}: {name}{hint}")
+
     def _gb10_post(
         self, operation: str, url: str, headers: dict[str, str], payload: dict[str, Any]
     ) -> httpx.Response:
@@ -67,7 +89,10 @@ class RAGClient:
         raise AssertionError("unreachable")
 
     def health(self) -> bool:
-        response = self.qdrant.get("/healthz")
+        try:
+            response = self.qdrant.get("/healthz")
+        except httpx.RequestError as exc:
+            raise self._map_transport_error("qdrant health", exc) from None
         return response.status_code == 200
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -129,35 +154,47 @@ class RAGClient:
                 self._checked(response, f"create payload index {field}")
 
     def collection_info(self) -> dict[str, Any]:
-        return self._checked(self.qdrant.get(f"/collections/{self.config.collection}"), "collection info")
+        try:
+            return self._checked(self.qdrant.get(f"/collections/{self.config.collection}"), "collection info")
+        except httpx.RequestError as exc:
+            raise self._map_transport_error("collection info", exc) from None
 
     def count(self) -> int:
-        body = self._checked(
-            self.qdrant.post(f"/collections/{self.config.collection}/points/count", json={"exact": True}), "count"
-        )
+        try:
+            body = self._checked(
+                self.qdrant.post(f"/collections/{self.config.collection}/points/count", json={"exact": True}), "count"
+            )
+        except httpx.RequestError as exc:
+            raise self._map_transport_error("count", exc) from None
         return int(body.get("result", {}).get("count", 0))
 
     def upsert(self, points: list[dict[str, Any]]) -> None:
-        self._checked(
-            self.qdrant.put(f"/collections/{self.config.collection}/points?wait=true", json={"points": points}), "upsert"
-        )
+        try:
+            self._checked(
+                self.qdrant.put(f"/collections/{self.config.collection}/points?wait=true", json={"points": points}), "upsert"
+            )
+        except httpx.RequestError as exc:
+            raise self._map_transport_error("upsert", exc) from None
 
     def search(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
         """Qdrant v1.18 query API: named dense + sparse prefetch fused by server-side RRF."""
         dense = self.embed([query])[0]
-        body = self._checked(
-            self.qdrant.post(
-                f"/collections/{self.config.collection}/points/query",
-                json={
-                    "prefetch": [
-                        {"query": dense, "using": "dense", "limit": limit * 3},
-                        {"query": sparse_vector(query), "using": "bm25", "limit": limit * 3},
-                    ],
-                    "query": {"fusion": "rrf"}, "limit": limit * 2, "with_payload": True,
-                },
-            ),
-            "hybrid RRF query",
-        )
+        try:
+            body = self._checked(
+                self.qdrant.post(
+                    f"/collections/{self.config.collection}/points/query",
+                    json={
+                        "prefetch": [
+                            {"query": dense, "using": "dense", "limit": limit * 3},
+                            {"query": sparse_vector(query), "using": "bm25", "limit": limit * 3},
+                        ],
+                        "query": {"fusion": "rrf"}, "limit": limit * 2, "with_payload": True,
+                    },
+                ),
+                "hybrid RRF query",
+            )
+        except httpx.RequestError as exc:
+            raise self._map_transport_error("hybrid RRF query", exc) from None
         result = body.get("result", {})
         fused = result.get("points", []) if isinstance(result, dict) else []
         if not isinstance(fused, list):

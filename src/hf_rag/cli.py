@@ -28,21 +28,30 @@ def _emit(value: dict[str, object]) -> None:
     print(json.dumps(value, sort_keys=True), flush=True)
 
 
-@app.command("create-collection")
-def create_collection(config: ConfigOption = None) -> None:
-    client = RAGClient(load_config(config))
+def _run_client(config: ConfigOption, fn) -> None:
+    cfg = load_config(config)
+    client = RAGClient(cfg)
     try:
-        client.create_collection()
-        _emit(safe_event("collection_ready"))
+        fn(client, cfg)
+    except ServiceError as exc:
+        _emit(safe_event("error", error_type=type(exc).__name__, message=str(exc)))
+        raise SystemExit(2) from None
     finally:
         client.close()
 
 
+@app.command("create-collection")
+def create_collection(config: ConfigOption = None) -> None:
+    def _go(client: RAGClient, _cfg) -> None:
+        client.create_collection()
+        _emit(safe_event("collection_ready"))
+
+    _run_client(config, _go)
+
+
 @app.command()
 def doctor(config: ConfigOption = None) -> None:
-    cfg = load_config(config)
-    client = RAGClient(cfg)
-    try:
+    def _go(client: RAGClient, _cfg) -> None:
         if not client.health():
             raise ServiceError("qdrant health unavailable")
         vectors = client.embed(["hello world", "测试文档"])
@@ -55,14 +64,18 @@ def doctor(config: ConfigOption = None) -> None:
         if terms == 0:
             raise ServiceError("bm25 fixture empty")
         _emit(safe_event("doctor_ok", embedding_dim=4096, bm25_fixture_terms=terms, rerank_results=len(scores)))
-    finally:
-        client.close()
+
+    _run_client(config, _go)
 
 
 @app.command("ingest")
 def ingest_cmd(source: Annotated[Path, typer.Argument(exists=True, readable=True)], config: ConfigOption = None) -> None:
-    stats = ingest(source, load_config(config))
-    _emit(safe_event("ingest_return", **stats.as_dict()))
+    try:
+        stats = ingest(source, load_config(config))
+        _emit(safe_event("ingest_return", **stats.as_dict()))
+    except ServiceError as exc:
+        _emit(safe_event("error", error_type=type(exc).__name__, message=str(exc)))
+        raise SystemExit(2) from None
 
 
 @app.command()
@@ -80,8 +93,7 @@ def safe_probe(source: Annotated[Path, typer.Argument(exists=True, readable=True
 
 @app.command("search-json")
 def search_json(config: ConfigOption = None) -> None:
-    client = RAGClient(load_config(config))
-    try:
+    def _go(client: RAGClient, _cfg) -> None:
         for line in sys.stdin:
             try:
                 request = json.loads(line)
@@ -91,37 +103,33 @@ def search_json(config: ConfigOption = None) -> None:
                     raise ValueError("invalid request")
                 _emit({"results": client.safe_hits(client.search(query, limit))})
             except (ValueError, ServiceError, OSError) as exc:
-                _emit({"error_type": type(exc).__name__})
-    finally:
-        client.close()
+                _emit({"error_type": type(exc).__name__, "message": str(exc) if isinstance(exc, ServiceError) else type(exc).__name__})
+
+    _run_client(config, _go)
 
 
 @app.command()
 def search(query: Annotated[str, typer.Option("--query")], limit: Annotated[int, typer.Option("--limit")] = 8, config: ConfigOption = None) -> None:
-    client = RAGClient(load_config(config))
-    try:
+    def _go(client: RAGClient, _cfg) -> None:
         _emit({"results": client.safe_hits(client.search(query, limit))})
-    finally:
-        client.close()
+
+    _run_client(config, _go)
 
 
 @app.command()
 def stats(config: ConfigOption = None) -> None:
-    client = RAGClient(load_config(config))
-    try:
+    def _go(client: RAGClient, _cfg) -> None:
         _emit(safe_event("stats", point_count=client.count(), qdrant_rss_mib=qdrant_rss_mib()))
-    finally:
-        client.close()
+
+    _run_client(config, _go)
 
 
 @app.command()
 def verify(config: ConfigOption = None) -> None:
-    cfg = load_config(config)
-    client = RAGClient(cfg)
-    try:
+    def _go(client: RAGClient, _cfg) -> None:
         _emit(safe_event("verify", health=client.health(), point_count=client.count(), qdrant_rss_mib=qdrant_rss_mib()))
-    finally:
-        client.close()
+
+    _run_client(config, _go)
 
 
 if __name__ == "__main__":

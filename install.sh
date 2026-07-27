@@ -235,11 +235,18 @@ main() {
   smoke "$ragctl_bin"
 
   log "ragctl_installed path=$ragctl_bin"
-  log "next:"
+  log "next (run in THIS shell or add to ~/.bashrc):"
+  # Hermes/raven boxes often keep tools under /opt/data while HOME=/root.
+  if [ -d /opt/data ]; then
+    log "  export PATH=\"/opt/data/.local/bin:/opt/data/.local/share/mise/shims:\$PATH\""
+    log "  [ -f /opt/data/.config/hf-rag/path.sh ] && . /opt/data/.config/hf-rag/path.sh"
+  fi
   log "  export PATH=\"$HOME/.local/bin:$MISE_DATA_DIR/shims:\$PATH\""
-  log "  eval \"\$($MISE_BIN activate bash)\"   # or your shell"
+  log "  eval \"\$($MISE_BIN activate bash)\"   # optional"
+  log "  ragctl --help"
+  log "If doctor fails with connection refused inside a container:"
+  log "  on host: sh /home/obj/srv/hf-rag/app/deploy/scripts/setup-container-client.sh hermes-ai-safety-hermes-1"
   log "upgrade: curl -fsSL https://raw.githubusercontent.com/RyderFreeman4Logos/hf-rag/main/install.sh | bash"
-  log "optional host config: RAGCTL_CONFIG=/home/obj/srv/hf-rag/etc/ragctl.toml ragctl doctor"
   log "ok ($method)"
 }
 

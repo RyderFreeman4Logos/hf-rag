@@ -47,7 +47,41 @@ class Config:
         return next((rule for rule in self.rules if fnmatch(dataset_path, rule.glob)), self.rules[-1])
 
 
+def discover_config_path() -> Path | None:
+    """Resolve config without printing contents.
+
+    Order:
+    1. RAGCTL_CONFIG env
+    2. ./ragctl.toml
+    3. $XDG_CONFIG_HOME/hf-rag/ragctl.toml
+    4. ~/.config/hf-rag/ragctl.toml
+    5. /opt/data/.config/hf-rag/ragctl.toml  (hermes/raven volume)
+    6. /home/obj/srv/hf-rag/etc/ragctl.toml  (host deploy)
+    """
+    env = os.environ.get("RAGCTL_CONFIG")
+    candidates: list[Path] = []
+    if env:
+        candidates.append(Path(env))
+    candidates.append(Path.cwd() / "ragctl.toml")
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        candidates.append(Path(xdg) / "hf-rag" / "ragctl.toml")
+    home = Path.home()
+    candidates.append(home / ".config" / "hf-rag" / "ragctl.toml")
+    candidates.append(Path("/opt/data/.config/hf-rag/ragctl.toml"))
+    candidates.append(Path("/home/obj/srv/hf-rag/etc/ragctl.toml"))
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path
+        except OSError:
+            continue
+    return None
+
+
 def load_config(path: Path | None) -> Config:
+    if path is None:
+        path = discover_config_path()
     if path is None:
         return Config()
     raw = tomllib.loads(path.read_text(encoding="utf-8"))

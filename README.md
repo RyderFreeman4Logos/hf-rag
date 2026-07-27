@@ -51,10 +51,35 @@ Preferred one-liner (pulls **GitHub `main`**, no sudo, no corpus access):
 ```sh
 raven-box hermes-shell ai-safety
 curl -fsSL https://raw.githubusercontent.com/RyderFreeman4Logos/hf-rag/main/install.sh | bash
-export PATH="$HOME/.local/bin:$PATH"
-# optional if you use mise shims:
-eval "$(mise activate bash)"
+# Hermes boxes often use HOME=/root while tools land under /opt/data:
+export PATH="/opt/data/.local/bin:/opt/data/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+[ -f /opt/data/.config/hf-rag/path.sh ] && . /opt/data/.config/hf-rag/path.sh
 ragctl --help
+```
+
+### Why `ragctl` seemed broken after install
+
+Two separate issues are common:
+
+1. **PATH**: install puts binaries under `/opt/data/.local/bin` (or mise installs), but a fresh shell `PATH` may not include them → `ragctl: not found`.
+2. **Network**: host Qdrant is published only on **host** `127.0.0.1:6333`. Inside the container that loopback is *not* the host, so default `http://127.0.0.1:6333` fails with connection refused.
+
+Fix on the **host** (once per box):
+
+```sh
+# as obj@mp
+sh /home/obj/srv/hf-rag/app/deploy/scripts/setup-container-client.sh hermes-ai-safety-hermes-1
+```
+
+This attaches Qdrant to `hermes-ai-safety_private`, writes `/opt/data/.config/hf-rag/ragctl.toml` pointing at `http://deploy-qdrant-1:6333`, injects API keys into env (not argv), and links `ragctl` onto PATH.
+
+Then inside the shell:
+
+```sh
+. /opt/data/.config/hf-rag/path.sh
+ragctl doctor
+ragctl stats
+ragctl search --query 'capacity planning documentation'
 ```
 
 What `install.sh` does:
