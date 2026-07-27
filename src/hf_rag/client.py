@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import time
+from threading import Lock, local
 from typing import Any, Iterable
 
 import httpx
@@ -24,11 +25,55 @@ class RAGClient:
         if key := config.qdrant_api_key():
             headers["api-key"] = key
         self.qdrant = httpx.Client(base_url=config.qdrant_url, headers=headers, timeout=config.timeout_seconds)
-        self.gb10 = httpx.Client(timeout=config.timeout_seconds)
+        # Embedding calls are submitted from multiple worker threads. A sync
+        # httpx.Client must not be shared between them: thread-local clients
+        # give each worker its own connection pool and therefore a real GB10
+        # TCP connection while Qdrant remains serial in the ingest loop.
+        self._gb10_local = local()
+        self._gb10_lock = Lock()
+        self._gb10_clients: list[Any] = []
+        self._closed = False
+
+    def _new_gb10_client(self) -> httpx.Client:
+        connection_limit = max(1, self.config.embed_concurrency)
+        return httpx.Client(
+            timeout=self.config.timeout_seconds,
+            limits=httpx.Limits(
+                max_connections=connection_limit,
+                max_keepalive_connections=connection_limit,
+            ),
+        )
+
+    @property
+    def gb10(self) -> httpx.Client:
+        """Return the calling thread's GB10 client, creating it on first use."""
+        client = getattr(self._gb10_local, "client", None)
+        if client is not None:
+            return client
+        with self._gb10_lock:
+            if self._closed:
+                raise RuntimeError("RAGClient is closed")
+            client = self._new_gb10_client()
+            self._gb10_clients.append(client)
+            self._gb10_local.client = client
+        return client
+
+    @gb10.setter
+    def gb10(self, client: httpx.Client) -> None:
+        """Allow synthetic transports in tests without sharing production clients."""
+        with self._gb10_lock:
+            if self._closed:
+                raise RuntimeError("RAGClient is closed")
+            self._gb10_clients.append(client)
+            self._gb10_local.client = client
 
     def close(self) -> None:
         self.qdrant.close()
-        self.gb10.close()
+        with self._gb10_lock:
+            self._closed = True
+            clients, self._gb10_clients = self._gb10_clients, []
+        for client in clients:
+            client.close()
 
     @staticmethod
     def _checked(response: httpx.Response, operation: str) -> dict[str, Any]:

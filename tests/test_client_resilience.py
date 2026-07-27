@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock, get_ident
 from typing import Any
 
 import httpx
@@ -99,6 +101,52 @@ def test_default_gb10_retry_budget_is_extreme() -> None:
     assert config.timeout_seconds >= 540
     assert config.gb10_max_attempts >= 50
     assert config.retry_max_sleep_seconds >= 120
+    assert config.embed_batch_size >= 16
+    assert config.upsert_batch_size >= 16
+
+
+def test_concurrent_embeds_use_distinct_thread_local_gb10_clients(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Synthetic transport proves workers do not share a single GB10 client."""
+    from hf_rag import client as client_module
+
+    entered = Barrier(2, timeout=2)
+    lock = Lock()
+    gb10_clients: list[object] = []
+    post_threads: set[int] = set()
+
+    class FakeQdrant:
+        def close(self) -> None:
+            pass
+
+    class BlockingGB10:
+        def close(self) -> None:
+            pass
+
+        def post(self, _url: str, **_kwargs: Any) -> httpx.Response:
+            with lock:
+                post_threads.add(get_ident())
+            entered.wait()
+            return httpx.Response(200, json={"data": [{"embedding": [0.0] * 4096}]})
+
+    def fake_client(*_args: Any, **kwargs: Any) -> object:
+        if "base_url" in kwargs:
+            return FakeQdrant()
+        client = BlockingGB10()
+        gb10_clients.append(client)
+        return client
+
+    monkeypatch.setattr(client_module.httpx, "Client", fake_client)
+    client = RAGClient(Config())
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(client.embed, ["synthetic input"]) for _ in range(2)]
+            for future in futures:
+                assert future.result() == [[0.0] * 4096]
+    finally:
+        client.close()
+
+    assert len(gb10_clients) == 2
+    assert len(post_threads) == 2
 
 
 def test_cli_disables_typer_pretty_exceptions() -> None:

@@ -32,9 +32,9 @@ class Config:
     timeout_seconds: float = 540.0
     gb10_max_attempts: int = 100
     retry_max_sleep_seconds: float = 300.0
-    embed_batch_size: int = 4
+    embed_batch_size: int = 16
     embed_concurrency: int = 8
-    upsert_batch_size: int = 8
+    upsert_batch_size: int = 16
     # Retrieval quality knobs (slow is OK). Defaults favor recall + rerank depth.
     dense_prefetch: int = 240
     bm25_prefetch: int = 240
