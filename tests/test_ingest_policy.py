@@ -61,7 +61,7 @@ class _ConcurrentClient:
 
 
 def test_ingest_keeps_eight_embedding_requests_in_flight(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from hf_rag import ingest as ingest_module
 
@@ -94,6 +94,9 @@ def test_ingest_keeps_eight_embedding_requests_in_flight(
     assert stats.upserted == 8
     assert holder["client"].max_active == 8
     assert holder["client"].upserts == 8
+    output = capsys.readouterr().out
+    assert '"embed_concurrency": 8' in output
+    assert "synthetic" not in output
 
 
 class _FailingClient:

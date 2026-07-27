@@ -129,6 +129,21 @@ def ingest(source: Path, config: Config, *, progress_every: int = 100) -> Ingest
     batch: list[Record] = []
     pending: deque[tuple[list[Record], Future[list[list[float]]]]] = deque()
 
+    print(
+        json.dumps(
+            safe_event(
+                "ingest_started",
+                embed_concurrency=config.embed_concurrency,
+                embed_batch_size=config.embed_batch_size,
+                upsert_batch_size=config.upsert_batch_size,
+                timeout_seconds=config.timeout_seconds,
+                gb10_max_attempts=config.gb10_max_attempts,
+            ),
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+
     def flush_one() -> None:
         records, future = pending.popleft()
         # A permanent error propagates and leaves these rows uncheckpointed for
