@@ -67,9 +67,56 @@ docker exec -i -e QK="$QDRANT_API_KEY" -e GK="${GB10_API_KEY:-}" "$CONTAINER" sh
 # PATH helper for interactive shells (HOME may be /root while tools live under /opt/data)
 docker exec "$CONTAINER" sh -lc '
   mkdir -p /opt/data/.local/bin
-  if [ -x /opt/data/.local/bin/ragctl ]; then
-    ln -sfn /opt/data/.local/bin/ragctl /usr/local/bin/ragctl 2>/dev/null || true
+  # Prefer uv-installed real binary if present
+  REAL=""
+  for c in /opt/data/.local/share/uv/tools/hf-rag/bin/ragctl \
+           /opt/data/.local/bin/ragctl.real; do
+    if [ -x "$c" ]; then REAL="$c"; break; fi
+  done
+  # If current ragctl is the real script (not our wrapper), remember it
+  if [ -z "$REAL" ] && [ -x /opt/data/.local/bin/ragctl ] && ! head -1 /opt/data/.local/bin/ragctl | grep -q "hf-rag env"; then
+    if head -1 /opt/data/.local/bin/ragctl | grep -q python || grep -q "hf_rag" /opt/data/.local/bin/ragctl 2>/dev/null; then
+      REAL=/opt/data/.local/bin/ragctl
+    fi
   fi
+  [ -n "$REAL" ] && ln -sfn "$REAL" /opt/data/.local/bin/ragctl.real
+
+  # Wrapper: Hermes agent tool shells often skip .bashrc and have no QDRANT_API_KEY
+  # → bare ragctl would hit Qdrant 401. Always load ragctl.env here.
+  if [ -x /opt/data/.local/bin/ragctl.real ] || [ -x /opt/data/.local/share/uv/tools/hf-rag/bin/ragctl ]; then
+    cat > /opt/data/.local/bin/ragctl <<'"'"'WRAP'"'"'
+#!/bin/sh
+# hf-rag env bootstrap for non-interactive Hermes terminals
+CFG="${RAGCTL_CONFIG:-/opt/data/.config/hf-rag/ragctl.toml}"
+ENVF="/opt/data/.config/hf-rag/ragctl.env"
+REAL="/opt/data/.local/share/uv/tools/hf-rag/bin/ragctl"
+if [ ! -x "$REAL" ]; then REAL="/opt/data/.local/bin/ragctl.real"; fi
+if [ -r "$ENVF" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENVF"
+  set +a
+fi
+export RAGCTL_CONFIG="${RAGCTL_CONFIG:-$CFG}"
+if [ -f "${RAGCTL_CONFIG}" ]; then
+  case " $* " in
+    *" --config "*) exec "$REAL" "$@" ;;
+    *)
+      if [ "$#" -ge 1 ]; then
+        cmd="$1"; shift
+        exec "$REAL" "$cmd" --config "$RAGCTL_CONFIG" "$@"
+      else
+        exec "$REAL" --help
+      fi
+      ;;
+  esac
+else
+  exec "$REAL" "$@"
+fi
+WRAP
+    chmod 755 /opt/data/.local/bin/ragctl
+  fi
+  ln -sfn /opt/data/.local/bin/ragctl /usr/local/bin/ragctl 2>/dev/null || true
   # profile snippet — never hard-fail if env is unreadable
   snip=/opt/data/.config/hf-rag/path.sh
   cat > "$snip" <<'\''EOS'\''
@@ -87,10 +134,11 @@ export RAGCTL_CONFIG="${RAGCTL_CONFIG:-/opt/data/.config/hf-rag/ragctl.toml}"
 EOS
   # Ownership: hermes-shell sessions are often user hermes on /opt/data volume.
   if id hermes >/dev/null 2>&1; then
-    chown -R hermes:hermes /opt/data/.config/hf-rag
+    chown -R hermes:hermes /opt/data/.config/hf-rag /opt/data/.local/bin/ragctl /opt/data/.local/bin/ragctl.real 2>/dev/null || true
     chmod 750 /opt/data/.config/hf-rag
     chmod 640 /opt/data/.config/hf-rag/ragctl.env
     chmod 644 /opt/data/.config/hf-rag/ragctl.toml /opt/data/.config/hf-rag/path.sh
+    chmod 755 /opt/data/.local/bin/ragctl 2>/dev/null || true
   else
     chmod 755 /opt/data/.config/hf-rag
     chmod 644 /opt/data/.config/hf-rag/ragctl.env /opt/data/.config/hf-rag/ragctl.toml /opt/data/.config/hf-rag/path.sh
@@ -108,7 +156,7 @@ EOS
   done
 '
 
-# Smoke as root and as hermes (the interactive user)
+# Smoke: interactive path + agent-like clean env (no bashrc) must not 401
 docker exec "$CONTAINER" sh -lc '
   . /opt/data/.config/hf-rag/path.sh
   command -v ragctl
@@ -121,6 +169,11 @@ if docker exec "$CONTAINER" id hermes >/dev/null 2>&1; then
     . /opt/data/.config/hf-rag/path.sh
     command -v ragctl
     ragctl stats --config /opt/data/.config/hf-rag/ragctl.toml
+  '
+  # Critical: no env inheritance (Hermes tool shells)
+  docker exec -u hermes "$CONTAINER" sh -lc '
+    env -i HOME=/opt/data PATH=/opt/data/.local/bin:/usr/bin:/bin \
+      /opt/data/.local/bin/ragctl stats
   '
 fi
 

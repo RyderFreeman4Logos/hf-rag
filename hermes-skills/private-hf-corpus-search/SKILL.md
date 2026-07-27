@@ -15,16 +15,30 @@ Inside `raven-box hermes-shell ai-safety` (user `hermes`, `HOME=/opt/data`):
 
 ```bash
 export PATH="/opt/data/.local/bin:/opt/data/.local/share/mise/shims:${PATH:-}"
+# Optional if wrapper installed; still fine to source:
 [ -r /opt/data/.config/hf-rag/path.sh ] && . /opt/data/.config/hf-rag/path.sh
 command -v ragctl
+ragctl stats
 ragctl doctor
 ```
 
-If `path.sh` or `ragctl.env` is unreadable, stop and tell the operator to run on the **host**:
+**401 is almost never “key expired”.** Qdrant returns 401 when **no/wrong API key** is sent. Hermes tool shells often **do not load `.bashrc`**, so bare `ragctl` used to miss `QDRANT_API_KEY`. The `/opt/data/.local/bin/ragctl` **wrapper** loads `ragctl.env` itself — use that binary (on PATH as above).
+
+If still 401 after wrapper:
 
 ```bash
+# operator on host
 sh /home/obj/srv/hf-rag/app/deploy/scripts/setup-container-client.sh hermes-ai-safety-hermes-1
 ```
+
+Then in the box:
+
+```bash
+# must succeed even with clean env (no bashrc)
+env -i HOME=/opt/data PATH=/opt/data/.local/bin:/usr/bin:/bin ragctl stats
+```
+
+Do **not** call Qdrant at `127.0.0.1:6333` from inside the container (that is host-only). Config must use `http://deploy-qdrant-1:6333`.
 
 ## Quality defaults (slow is fine)
 
