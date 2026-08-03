@@ -11,8 +11,8 @@ services:
     cpus: "1.0"
     pids_limit: 128
     ports:
-      # Host-local only (not LAN/tailscale). Containers use docker network alias.
-      - "127.0.0.1:6333:6333"
+      # Tailscale mesh IP (rootless dual-bind flaky). Host tools use 100.x, not LAN 0.0.0.0.
+      - "100.127.197.57:6333:6333"
     env_file:
       - /home/obj/srv/hf-rag/etc/qdrant.env
     volumes:
